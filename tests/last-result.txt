@@ -1,0 +1,3 @@
+PASS: handshake: Welcome to skynet, I will send heartbeat every 5 sec.
+PASS: set/get: hello-from-docker
+PASS: official Skynet demo round trip

@@ -1,0 +1,8 @@
+services:
+  skynet:
+    image: skynet-demo:1.8.0
+    build: .
+    stdin_open: true
+    tty: true
+    ports:
+      - "127.0.0.1:8888:8888"

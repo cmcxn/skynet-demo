@@ -1,0 +1,10 @@
+*
+!Dockerfile
+!vendor/
+!vendor/skynet/
+!vendor/skynet/**
+!tests/
+!tests/demo-client.lua
+!tests/run-demo.sh
+!tests/client-socket.c
+**/.git
