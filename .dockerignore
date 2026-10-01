@@ -3,8 +3,12 @@
 !vendor/
 !vendor/skynet/
 !vendor/skynet/**
+!vendor/lua-cjson/
+!vendor/lua-cjson/**
 !tests/
 !tests/demo-client.lua
 !tests/run-demo.sh
 !tests/client-socket.c
+!tests/config-features
+!tests/features.lua
 **/.git
