@@ -6,3 +6,13 @@ services:
     tty: true
     ports:
       - "127.0.0.1:8888:8888"
+    # Runtime variables are separate from Docker build-time proxy settings.
+    # Values are passed through only when defined in the launching environment.
+    environment:
+      - http_proxy
+      - https_proxy
+      - HTTPS_PROXY
+      - all_proxy
+      - ALL_PROXY
+      - no_proxy
+      - NO_PROXY

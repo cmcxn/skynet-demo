@@ -12,3 +12,8 @@
 !tests/config-features
 !tests/features.lua
 **/.git
+
+!patches/
+!patches/**
+!scripts/
+!scripts/apply-skynet-patches.sh

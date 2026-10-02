@@ -1,0 +1,867 @@
+diff --git a/lualib-src/ltls.c b/lualib-src/ltls.c
+index 3fd4a0a..594b3c9 100644
+--- a/lualib-src/ltls.c
++++ b/lualib-src/ltls.c
+@@ -5,6 +5,7 @@
+ #include <openssl/err.h>
+ #include <openssl/dh.h>
+ #include <openssl/ssl.h>
++#include <openssl/x509v3.h>
+ #include <openssl/conf.h>
+ #include <openssl/engine.h>
+ #include <lua.h>
+@@ -25,32 +26,36 @@ struct ssl_ctx {
+     SSL_CTX* ctx;
+ };
+ 
+-// static int
+-// _ssl_verify_peer(int ok, X509_STORE_CTX* ctx) {
+-//     return 1;
+-// }
+-
++static void
++_free_context(struct tls_context* tls_p) {
++    SSL_free(tls_p->ssl); // SSL owns both BIOs after SSL_set_bio.
++    tls_p->ssl = NULL;
++    tls_p->in_bio = NULL;
++    tls_p->out_bio = NULL;
++    tls_p->is_close = true;
++}
+ 
+ static void
+ _init_bio(lua_State* L, struct tls_context* tls_p, struct ssl_ctx* ctx_p) {
+-    tls_p->ssl = SSL_new(ctx_p->ctx);
+-    if(!tls_p->ssl) {
++    SSL* ssl = SSL_new(ctx_p->ctx);
++    if(!ssl) {
+         luaL_error(L, "SSL_new failed");
+     }
+ 
+-    tls_p->in_bio = BIO_new(BIO_s_mem());
+-    if(!tls_p->in_bio) {
+-        luaL_error(L, "new in bio failed");
++    BIO* in_bio = BIO_new(BIO_s_mem());
++    BIO* out_bio = BIO_new(BIO_s_mem());
++    if(!in_bio || !out_bio) {
++        BIO_free(in_bio);
++        BIO_free(out_bio);
++        SSL_free(ssl);
++        luaL_error(L, "new TLS bio failed");
+     }
+-    BIO_set_mem_eof_return(tls_p->in_bio, -1); /* see: https://www.openssl.org/docs/crypto/BIO_s_mem.html */
+-
+-    tls_p->out_bio = BIO_new(BIO_s_mem());
+-    if(!tls_p->out_bio) {
+-        luaL_error(L, "new out bio failed");
+-    }
+-    BIO_set_mem_eof_return(tls_p->out_bio, -1); /* see: https://www.openssl.org/docs/crypto/BIO_s_mem.html */
+-
+-    SSL_set_bio(tls_p->ssl, tls_p->in_bio, tls_p->out_bio);
++    BIO_set_mem_eof_return(in_bio, -1);
++    BIO_set_mem_eof_return(out_bio, -1);
++    SSL_set_bio(ssl, in_bio, out_bio);
++    tls_p->ssl = ssl;
++    tls_p->in_bio = in_bio;
++    tls_p->out_bio = out_bio;
+ }
+ 
+ 
+@@ -58,6 +63,8 @@ static void
+ _init_client_context(lua_State* L, struct tls_context* tls_p, struct ssl_ctx* ctx_p) {
+     tls_p->is_server = false;
+     _init_bio(L, tls_p, ctx_p);
++    // Verification belongs to client SSL objects, never server contexts.
++    SSL_set_verify(tls_p->ssl, SSL_VERIFY_PEER, NULL);
+     SSL_set_connect_state(tls_p->ssl);
+ }
+ 
+@@ -70,10 +77,7 @@ _init_server_context(lua_State* L, struct tls_context* tls_p, struct ssl_ctx* ct
+ 
+ static struct tls_context *
+ _check_context(lua_State* L, int idx) {
+-    struct tls_context* tls_p = (struct tls_context*)lua_touserdata(L, idx);
+-    if(!tls_p) {
+-        luaL_error(L, "need tls context");
+-    }
++    struct tls_context* tls_p = luaL_checkudata(L, idx, "_TLS_CONTEXT_METATABLE_");
+     if(tls_p->is_close) {
+         luaL_error(L, "context is closed");
+     }
+@@ -82,9 +86,9 @@ _check_context(lua_State* L, int idx) {
+ 
+ static struct ssl_ctx *
+ _check_sslctx(lua_State* L, int idx) {
+-    struct ssl_ctx* ctx_p = (struct ssl_ctx*)lua_touserdata(L, idx);
+-    if(!ctx_p) {
+-        luaL_error(L, "need sslctx");
++    struct ssl_ctx* ctx_p = luaL_checkudata(L, idx, "_TLS_SSLCTX_METATABLE_");
++    if(!ctx_p->ctx) {
++        luaL_error(L, "sslctx is closed");
+     }
+     return ctx_p;
+ }
+@@ -99,13 +103,9 @@ _ltls_context_finished(lua_State* L) {
+ 
+ static int
+ _ltls_context_close(lua_State* L) {
+-    struct tls_context* tls_p = lua_touserdata(L, 1);
++    struct tls_context* tls_p = luaL_checkudata(L, 1, "_TLS_CONTEXT_METATABLE_");
+     if(!tls_p->is_close) {
+-        SSL_free(tls_p->ssl);
+-        tls_p->ssl = NULL;
+-        tls_p->in_bio = NULL; //in_bio and out_bio will be free when SSL_free is called
+-        tls_p->out_bio = NULL;
+-        tls_p->is_close = true;
++        _free_context(tls_p);
+     }
+     return 0;
+ }
+@@ -177,9 +177,11 @@ _ltls_context_handshake(lua_State* L) {
+ 
+     // first handshake; initiated by client
+     if(!SSL_is_init_finished(tls_p->ssl)) {
++        ERR_clear_error();
+         int ret = SSL_do_handshake(tls_p->ssl);
+         if(ret == 1) {
+-            return 0;
++            // A successful handshake can still generate the final TLS flight.
++            return _bio_read(L, tls_p) > 0 ? 1 : 0;
+         } else if (ret < 0) {
+             int err = SSL_get_error(tls_p->ssl, ret);
+             ERR_clear_error();
+@@ -189,6 +191,11 @@ _ltls_context_handshake(lua_State* L) {
+                     return 1;
+                 }
+             } else {
++                long verify = SSL_get_verify_result(tls_p->ssl);
++                if(!tls_p->is_server && verify != X509_V_OK) {
++                    luaL_error(L, "TLS certificate verification failed: %s",
++                        X509_verify_cert_error_string(verify));
++                }
+                 luaL_error(L, "SSL_do_handshake error:%d ret:%d", err, ret);
+             }
+         } else {
+@@ -267,19 +274,63 @@ _ltls_context_write(lua_State* L) {
+     return 1;
+ }
+ 
++static const char*
++_check_hostname(lua_State* L, int idx) {
++    size_t len;
++    if(lua_type(L, idx) != LUA_TSTRING) {
++        luaL_error(L, "client hostname is required");
++    }
++    const char* hostname = lua_tolstring(L, idx, &len);
++    if(len == 0 || len > 253 || strlen(hostname) != len || hostname[0] == '.' ||
++        strpbrk(hostname, "* /\\[]@?#%\t\r\n") != NULL) {
++        luaL_error(L, "invalid client hostname");
++    }
++    return hostname;
++}
++
++static void
++_set_client_hostname(lua_State* L, struct tls_context* tls_p, const char* hostname) {
++    X509_VERIFY_PARAM* param = SSL_get0_param(tls_p->ssl);
++    ASN1_OCTET_STRING* ip = a2i_IPADDRESS(hostname);
++    int ret;
++    SSL_set_hostflags(tls_p->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
++    if(ip) {
++        // IP literals must match an iPAddress SAN and must never be sent as SNI.
++        ret = SSL_set1_host(tls_p->ssl, NULL) == 1 &&
++            X509_VERIFY_PARAM_set1_ip(param, ASN1_STRING_get0_data(ip),
++                ASN1_STRING_length(ip)) == 1 &&
++            SSL_set_tlsext_host_name(tls_p->ssl, NULL) == 1;
++        ASN1_OCTET_STRING_free(ip);
++    } else {
++        // A colon in a non-IP identity means a port or malformed IPv6 address.
++        ret = strchr(hostname, ':') == NULL &&
++            X509_VERIFY_PARAM_set1_ip(param, NULL, 0) == 1 &&
++            SSL_set1_host(tls_p->ssl, hostname) == 1 &&
++            SSL_set_tlsext_host_name(tls_p->ssl, hostname) == 1;
++    }
++    if(!ret) {
++        // Never leave a partially configured verification identity usable.
++        _free_context(tls_p);
++        ERR_clear_error();
++        luaL_error(L, "failed to configure client hostname verification");
++    }
++}
++
+ static int
+ _lset_ext_host_name(lua_State* L) {
+     struct tls_context* tls_p = _check_context(L, 1);
+-    size_t slen = 0;
+-    char* host = (char*)lua_tolstring(L, 2, &slen);
+-    int ret = SSL_set_tlsext_host_name(tls_p->ssl, host);
+-    lua_pushinteger(L, ret);
++    const char* hostname = _check_hostname(L, 2);
++    if(tls_p->is_server || !SSL_in_before(tls_p->ssl)) {
++        return luaL_error(L, "hostname must be set before the client handshake");
++    }
++    _set_client_hostname(L, tls_p, hostname);
++    lua_pushinteger(L, 1);
+     return 1;
+ }
+ 
+ static int
+ _lctx_gc(lua_State* L) {
+-    struct ssl_ctx* ctx_p = _check_sslctx(L, 1);
++    struct ssl_ctx* ctx_p = luaL_checkudata(L, 1, "_TLS_SSLCTX_METATABLE_");
+     if(ctx_p->ctx) {
+         SSL_CTX_free(ctx_p->ctx);
+         ctx_p->ctx = NULL;
+@@ -333,14 +384,11 @@ _lctx_ciphers(lua_State* L) {
+ 
+ static int
+ lnew_ctx(lua_State* L) {
++    // Check options before pushing userdata, which otherwise occupies arg #1.
++    const char* cafile = luaL_optstring(L, 1, NULL);
++    const char* capath = luaL_optstring(L, 2, NULL);
+     struct ssl_ctx* ctx_p = (struct ssl_ctx*)lua_newuserdatauv(L, sizeof(*ctx_p), 0);
+-    ctx_p->ctx = SSL_CTX_new(SSLv23_method());
+-    if(!ctx_p->ctx) {
+-        unsigned int err = ERR_get_error();
+-        char buf[256];
+-        ERR_error_string_n(err, buf, sizeof(buf));
+-        luaL_error(L, "SSL_CTX_new client failed. %s\n", buf);
+-    }
++    ctx_p->ctx = NULL;
+ 
+     if(luaL_newmetatable(L, "_TLS_SSLCTX_METATABLE_")) {
+         luaL_Reg l[] = {
+@@ -355,30 +403,39 @@ lnew_ctx(lua_State* L) {
+         lua_setfield(L, -2, "__gc");
+     }
+     lua_setmetatable(L, -2);
++    ERR_clear_error();
++    ctx_p->ctx = SSL_CTX_new(TLS_method());
++    if(!ctx_p->ctx) {
++        return luaL_error(L, "SSL_CTX_new failed");
++    }
++    int ret = (cafile || capath) ?
++        SSL_CTX_load_verify_locations(ctx_p->ctx, cafile, capath) :
++        SSL_CTX_set_default_verify_paths(ctx_p->ctx);
++    if(ret != 1) {
++        char buf[256];
++        ERR_error_string_n(ERR_get_error(), buf, sizeof(buf));
++        SSL_CTX_free(ctx_p->ctx);
++        ctx_p->ctx = NULL;
++        ERR_clear_error();
++        return luaL_error(L, "failed to load TLS trust locations: %s", buf);
++    }
+     return 1;
+ }
+ 
+ 
+ static int
+ lnew_tls(lua_State* L) {
+-    struct tls_context* tls_p = (struct tls_context*)lua_newuserdatauv(L, sizeof(*tls_p), 1);
+-    tls_p->is_close = false;
+     const char* method = luaL_optstring(L, 1, "nil");
+     struct ssl_ctx* ctx_p = _check_sslctx(L, 2);
+-    lua_pushvalue(L, 2);
+-    lua_setiuservalue(L, -2, 1); // set ssl_ctx associated to tls_context
+-
+-    if(strcmp(method, "client") == 0) {
+-        _init_client_context(L, tls_p, ctx_p);
+-        if (!lua_isnoneornil(L, 3)) {
+-            const char* hostname = luaL_checkstring(L, 3);
+-            SSL_set_tlsext_host_name(tls_p->ssl, hostname);
+-        }
+-    }else if(strcmp(method, "server") == 0) {
+-        _init_server_context(L, tls_p, ctx_p);
+-    } else {
+-        luaL_error(L, "invalid method:%s e.g[server, client]", method);
++    bool is_client = strcmp(method, "client") == 0;
++    if(!is_client && strcmp(method, "server") != 0) {
++        return luaL_error(L, "invalid method:%s e.g[server, client]", method);
+     }
++    const char* hostname = is_client ? _check_hostname(L, 3) : NULL;
++    struct tls_context* tls_p = (struct tls_context*)lua_newuserdatauv(L, sizeof(*tls_p), 1);
++    memset(tls_p, 0, sizeof(*tls_p));
++    lua_pushvalue(L, 2);
++    lua_setiuservalue(L, -2, 1); // keep ssl_ctx alive for the TLS context
+ 
+     if(luaL_newmetatable(L, "_TLS_CONTEXT_METATABLE_")) {
+         luaL_Reg l[] = {
+@@ -395,7 +452,14 @@ lnew_tls(lua_State* L) {
+         lua_pushcfunction(L, _ltls_context_close);
+         lua_setfield(L, -2, "__gc");
+     }
++    // Install __gc before any OpenSSL allocation can fail.
+     lua_setmetatable(L, -2);
++    if(is_client) {
++        _init_client_context(L, tls_p, ctx_p);
++        _set_client_hostname(L, tls_p, hostname);
++    } else {
++        _init_server_context(L, tls_p, ctx_p);
++    }
+     return 1;
+ }
+ 
+diff --git a/lualib/http/httpc.lua b/lualib/http/httpc.lua
+index 057aa61..4864eae 100644
+--- a/lualib/http/httpc.lua
++++ b/lualib/http/httpc.lua
+@@ -2,153 +2,177 @@ local skynet = require "skynet"
+ local socket = require "http.sockethelper"
+ local internal = require "http.internal"
+ local dns = require "skynet.dns"
+-
+-local string = string
+-local table = table
+-local pcall = pcall
+-local error = error
+-local pairs = pairs
++local proxy = require "http.proxy"
+ 
+ local httpc = {}
++local async_dns
+ 
++function httpc.dns(server, port)
++    async_dns = true
++    dns.server(server, port)
++end
+ 
+-local async_dns
++local function plain_interface(fd)
++    return {
++        read = socket.readfunc(fd), write = socket.writefunc(fd),
++        readall = function() return socket.readall(fd) end,
++    }
++end
+ 
+-function httpc.dns(server,port)
+-	async_dns = true
+-	dns.server(server,port)
++local function close_interface(interface, fd)
++    if interface.finish then return end
++    interface.finish = true
++    -- Release TLS even if the socket close raises (and preserve the original error).
++    local ok, err = pcall(socket.close, fd)
++    if interface.close then
++        interface.close()
++        interface.close = nil
++    end
++    if not ok then error(err, 0) end
+ end
+ 
++local function tunnel(interface, origin, forward)
++    local authorization = forward.authorization and "Proxy-Authorization: "..forward.authorization.."\r\n" or ""
++    interface.write("CONNECT "..origin.connect_authority.." HTTP/1.1\r\nHost: "..
++        origin.connect_authority.."\r\n"..authorization.."\r\n")
++    local buffer = ""
++    -- Ignore a bounded number of informational responses, never a CONNECT body.
++    for _ = 1, 6 do
++        local boundary
++        while true do
++            boundary = buffer:find("\r\n\r\n", 1, true)
++            if boundary then
++                assert(boundary + 3 <= 8192, "Proxy CONNECT response headers too large")
++                break
++            end
++            assert(#buffer <= 8192, "Proxy CONNECT response headers too large")
++            local chunk = interface.read()
++            assert(chunk and #chunk > 0, "Proxy CONNECT response incomplete")
++            buffer = buffer .. chunk
++        end
++        local head, rest = buffer:sub(1, boundary + 3), buffer:sub(boundary + 4)
++        local statusline = head:match("^([^\r\n]+)\r\n")
++        local code = statusline and tonumber(statusline:match("^HTTP/1%.[01] (%d%d%d)%s.*$") or statusline:match("^HTTP/1%.[01] (%d%d%d)$"))
++        assert(code, "Invalid proxy CONNECT response")
++        if code >= 200 and code < 300 then return rest end
++        if code >= 200 or code == 101 then error("Proxy CONNECT failed (HTTP "..code..")", 0) end
++        buffer = rest
++    end
++    error("Too many proxy CONNECT informational responses", 0)
++end
+ 
+-local function check_protocol(host)
+-	local protocol = host:match("^[Hh][Tt][Tt][Pp][Ss]?://")
+-	if protocol then
+-		host = string.gsub(host, "^"..protocol, "")
+-		protocol = string.lower(protocol)
+-		if protocol == "https://" then
+-			return "https", host
+-		elseif protocol == "http://" then
+-			return "http", host
+-		else
+-			error(string.format("Invalid protocol: %s", protocol))
+-		end
+-	else
+-		return "http", host
+-	end
++local function resolve(address, timeout)
++    if not timeout then return dns.resolve(address) end
++    local co = coroutine.running()
++    local active, done, ok, result = true, false
++    skynet.fork(function()
++        ok, result = pcall(dns.resolve, address)
++        done = true
++        if active then skynet.wakeup(co) end
++    end)
++    skynet.sleep(timeout)
++    active = false
++    assert(done, "HTTP DNS resolution timeout")
++    if not ok then error(result, 0) end
++    return result
+ end
+ 
+-local SSLCTX_CLIENT = nil
+-local function gen_interface(protocol, fd, hostname)
+-	if protocol == "http" then
+-		return {
+-			init = nil,
+-			close = nil,
+-			read = socket.readfunc(fd),
+-			write = socket.writefunc(fd),
+-			readall = function ()
+-				return socket.readall(fd)
+-			end,
+-		}
+-	elseif protocol == "https" then
+-		local tls = require "http.tlshelper"
+-		SSLCTX_CLIENT = SSLCTX_CLIENT or tls.newctx()
+-		local tls_ctx = tls.newtls("client", SSLCTX_CLIENT, hostname)
+-		return {
+-			init = tls.init_requestfunc(fd, tls_ctx),
+-			close = tls.closefunc(tls_ctx),
+-			read = tls.readfunc(fd, tls_ctx),
+-			write = tls.writefunc(fd, tls_ctx),
+-			readall = tls.readallfunc(fd, tls_ctx),
+-		}
+-	else
+-		error(string.format("Invalid protocol: %s", protocol))
+-	end
++local function connect(origin, forward, timeout)
++    local started = skynet.now()
++    local function remaining()
++        if timeout == nil then return end
++        local left = timeout - (skynet.now() - started)
++        assert(left > 0, "HTTP request timeout")
++        return left
++    end
++    local address, port = origin.host, origin.port
++    if forward then address, port = forward.host, forward.port end
++    if async_dns and not address:find(':',1,true) and not address:match('^%d+%.%d+%.%d+%.%d+$') then
++        address = resolve(address, remaining())
++    end
++    local fd = socket.connect(address, port, remaining())
++    assert(fd, "HTTP connection failed")
++    local interface = plain_interface(fd)
++    local ok, err = pcall(function()
++        if timeout then
++            skynet.timeout(remaining(), function()
++                if not interface.finish then
++                    socket.shutdown(fd)
++                    -- A caller may leave a returned stream idle indefinitely.
++                    if interface.streaming then pcall(close_interface, interface, fd) end
++                end
++            end)
++        end
++        local pre
++        if forward and origin.protocol == "https" then pre = tunnel(interface, origin, forward) end
++        if origin.protocol == "https" then
++            local tls = require "http.tlshelper"
++            -- Per-connection context allows CA configuration to change without stale trust.
++            local ctx = tls.newctx(httpc.cafile, httpc.capath)
++            local tls_ctx = tls.newtls("client", ctx, origin.host)
++            interface.close = tls.closefunc(tls_ctx)
++            interface.read = tls.readfunc(fd, tls_ctx)
++            interface.write = tls.writefunc(fd, tls_ctx)
++            interface.readall = tls.readallfunc(fd, tls_ctx)
++            tls.init_requestfunc(fd, tls_ctx, pre)(origin.host)
++        end
++    end)
++    if not ok then
++        pcall(close_interface, interface, fd)
++        error(err, 0)
++    end
++    return fd, interface
+ end
+ 
+-local function connect(host, timeout)
+-	local protocol
+-	protocol, host = check_protocol(host)
+-	local hostaddr, port = host:match"([^:]+):?(%d*)$"
+-	if port == "" then
+-		port = protocol=="http" and 80 or protocol=="https" and 443
+-	else
+-		port = tonumber(port)
+-	end
+-	local hostname
+-	if not hostaddr:match(".*%d+$") then
+-		hostname = hostaddr
+-		if async_dns then
+-			hostaddr = dns.resolve(hostname)
+-		end
+-	end
+-	local fd = socket.connect(hostaddr, port, timeout)
+-	if not fd then
+-		error(string.format("%s connect error host:%s, port:%s, timeout:%s", protocol, hostaddr, port, timeout))
+-	end
+-	-- print("protocol hostname port", protocol, hostname, port)
+-	local interface = gen_interface(protocol, fd, hostname)
+-	if timeout then
+-		skynet.timeout(timeout, function()
+-			if not interface.finish then
+-				socket.shutdown(fd)	-- shutdown the socket fd, need close later.
+-			end
+-		end)
+-	end
+-	if interface.init then
+-		interface.init(host)
+-	end
+-	return fd, interface, host
++local function prepare(host, url, headers)
++    local origin = proxy.origin(host)
++    local forward = proxy.select(origin, httpc.proxy)
++    assert(type(url) == "string" and url:sub(1,1) == "/" and not url:find("[%z\r\n ]"), "Invalid HTTP request path")
++    local header = {}
++    for key, value in pairs(headers or {}) do
++        -- Never let proxy credentials cross a tunnel or reach a direct origin.
++        if key:lower() ~= "proxy-authorization" then header[key] = value end
++    end
++    if forward and origin.protocol == "http" then
++        url = "http://"..origin.authority..url
++        if forward.authorization then header["Proxy-Authorization"] = forward.authorization end
++    end
++    return origin, forward, url, header
+ end
+ 
+-local function close_interface(interface, fd)
+-	interface.finish = true
+-	socket.close(fd)
+-	if interface.close then
+-		interface.close()
+-		interface.close = nil
+-	end
++local function request(mode, method, hostname, url, recvheader, header, content)
++    local origin, forward
++    origin, forward, url, header = prepare(hostname, url, header)
++    local fd, interface = connect(origin, forward, httpc.timeout)
++    local ok, statuscode, body, response_header = pcall(internal.request, interface, method,
++        origin.authority, url, recvheader, header, content)
++    if ok and mode == "stream" then
++        local made, stream = pcall(internal.response_stream, interface, statuscode, body, response_header)
++        if made then
++            interface.streaming = true
++            stream._onclose = function() close_interface(interface, fd) end
++            return stream
++        end
++        ok, statuscode, body = false, stream, nil
++    elseif ok and mode ~= "head" then
++        ok, body = pcall(internal.response, interface, statuscode, body, response_header)
++    end
++    local cleanup, cleanup_error = pcall(close_interface, interface, fd)
++    if not ok then error(body or statuscode, 0) end
++    if not cleanup then error(cleanup_error, 0) end
++    return statuscode, body
+ end
+ 
+-function httpc.request(method, hostname, url, recvheader, header, content)
+-	local fd, interface, host = connect(hostname, httpc.timeout)
+-	local ok , statuscode, body , header = pcall(internal.request, interface, method, host, url, recvheader, header, content)
+-	if ok then
+-		ok, body = pcall(internal.response, interface, statuscode, body, header)
+-	end
+-	close_interface(interface, fd)
+-	if ok then
+-		return statuscode, body
+-	else
+-		error(body or statuscode)
+-	end
++function httpc.request(method, ...)
++    return request("body", method, ...)
+ end
+ 
+-function httpc.head(hostname, url, recvheader, header, content)
+-	local fd, interface, host = connect(hostname, httpc.timeout)
+-	local ok , statuscode = pcall(internal.request, interface, "HEAD", host, url, recvheader, header, content)
+-	close_interface(interface, fd)
+-	if ok then
+-		return statuscode
+-	else
+-		error(statuscode)
+-	end
++function httpc.head(...)
++    return request("head", "HEAD", ...)
+ end
+ 
+-function httpc.request_stream(method, hostname, url, recvheader, header, content)
+-	local fd, interface, host = connect(hostname, httpc.timeout)
+-	local ok , statuscode, body , header = pcall(internal.request, interface, method, host, url, recvheader, header, content)
+-	interface.finish = true -- don't shutdown fd in timeout
+-	local function close_fd()
+-		close_interface(interface, fd)
+-	end
+-	if not ok then
+-		close_fd()
+-		error(statuscode)
+-	end
+-	-- todo: stream support timeout
+-	local stream = internal.response_stream(interface, statuscode, body, header)
+-	stream._onclose = close_fd
+-	return stream
++function httpc.request_stream(method, ...)
++    return request("stream", method, ...)
+ end
+ 
+ function httpc.get(...)
+diff --git a/lualib/http/internal.lua b/lualib/http/internal.lua
+index a34b7df..3cc6118 100644
+--- a/lualib/http/internal.lua
++++ b/lualib/http/internal.lua
+@@ -241,7 +241,12 @@ function stream:close()
+ end
+ 
+ function stream:padding()
+-	return self._reading(self), self
++	local ok, data = pcall(self._reading, self)
++	if not ok then
++		self:close()
++		error(data, 0)
++	end
++	return data, self
+ end
+ 
+ stream.__close = stream.close
+diff --git a/lualib/http/tlshelper.lua b/lualib/http/tlshelper.lua
+index a81405c..31a6c7f 100644
+--- a/lualib/http/tlshelper.lua
++++ b/lualib/http/tlshelper.lua
+@@ -3,11 +3,13 @@ local c = require "ltls.c"
+ 
+ local tlshelper = {}
+ 
+-function tlshelper.init_requestfunc(fd, tls_ctx)
+-    local readfunc = socket.readfunc(fd)
++function tlshelper.init_requestfunc(fd, tls_ctx, pre)
++    -- CONNECT may have already consumed bytes from the tunneled TLS stream.
++    local readfunc = socket.readfunc(fd, pre ~= "" and pre or nil)
+     local writefunc = socket.writefunc(fd)
+     return function (hostname)
+-        tls_ctx:set_ext_host_name(hostname)
++        -- WSS clients already supplied the identity to newtls and call init().
++        if hostname then tls_ctx:set_ext_host_name(hostname) end
+         local ds1 = tls_ctx:handshake()
+         writefunc(ds1)
+         while not tls_ctx:finished() do
+@@ -88,8 +90,8 @@ function tlshelper.readallfunc(fd, tls_ctx)
+     end
+ end
+ 
+-function tlshelper.newctx()
+-    return c.newctx()
++function tlshelper.newctx(cafile, capath)
++    return c.newctx(cafile, capath)
+ end
+ 
+ function tlshelper.newtls(method, ssl_ctx, hostname)
+diff --git a/lualib/http/websocket.lua b/lualib/http/websocket.lua
+index 8279c7d..0e93e3a 100755
+--- a/lualib/http/websocket.lua
++++ b/lualib/http/websocket.lua
+@@ -351,20 +351,31 @@ local function _new_client_ws(socket_id, protocol, hostname)
+             end,
+         }
+     elseif protocol == "wss" then
+-        local tls = require "http.tlshelper"
+-        SSLCTX_CLIENT = SSLCTX_CLIENT or tls.newctx()
+-        local tls_ctx = tls.newtls("client", SSLCTX_CLIENT, hostname)
+-        local init = tls.init_requestfunc(socket_id, tls_ctx)
+-        init()
+-        obj = {
+-            close = function ()
+-                socket.close(socket_id)
+-                tls.closefunc(tls_ctx)()
+-            end,
+-            read = tls.readfunc(socket_id, tls_ctx),
+-            write = tls.writefunc(socket_id, tls_ctx),
+-            readall = tls.readallfunc(socket_id, tls_ctx),
+-        }
++        local tls, tls_ctx
++        local ok, err = pcall(function ()
++            tls = require "http.tlshelper"
++            SSLCTX_CLIENT = SSLCTX_CLIENT or tls.newctx()
++            tls_ctx = tls.newtls("client", SSLCTX_CLIENT, hostname)
++            local init = tls.init_requestfunc(socket_id, tls_ctx)
++            init()
++            obj = {
++                close = function ()
++                    socket.close(socket_id)
++                    tls.closefunc(tls_ctx)()
++                end,
++                read = tls.readfunc(socket_id, tls_ctx),
++                write = tls.writefunc(socket_id, tls_ctx),
++                readall = tls.readallfunc(socket_id, tls_ctx),
++            }
++        end)
++        if not ok then
++            -- TLS verification may fail before the object enters ws_pool.
++            if tls_ctx then
++                pcall(function () tls.closefunc(tls_ctx)() end)
++            end
++            pcall(socket.close, socket_id)
++            error(err, 0)
++        end
+     else
+         error(string.format("invalid websocket protocol:%s", tostring(protocol)))
+     end
+@@ -477,22 +488,18 @@ function M.connect(url, header, timeout)
+     end
+ 
+     assert(host)
+-    local host_addr, host_port = string.match(host, "^([^:]+):?(%d*)$")
+-    assert(host_addr and host_port)
+-    if host_port == "" then
+-        host_port = protocol == "ws" and 80 or 443
+-    end
+-    local hostname
+-    if not host_addr:match(".*%d+$") then
+-        hostname = host_addr
+-    end
++    -- Reuse only authority parsing: WebSocket connections remain direct.
++    local origin = require("http.proxy").origin(
++        (protocol == "wss" and "https://" or "http://") .. host)
++    local host_addr, host_port = origin.host, origin.port
++    local hostname = host_addr -- IPs and DNS names ending in digits also need verification.
+ 
+     uri = uri == "" and "/" or uri
+     local socket_id = sockethelper.connect(host_addr, host_port, timeout)
+     local ws_obj = _new_client_ws(socket_id, protocol, hostname)
+     ws_obj.addr = host
+     
+-    local is_ok,err = pcall(write_handshake, ws_obj, host_addr, uri, header)
++    local is_ok,err = pcall(write_handshake, ws_obj, host, uri, header)
+     if not is_ok then
+         _close_websocket(ws_obj)
+         error(err)
+diff --git a/vendor/skynet/lualib/http/proxy.lua b/lualib/http/proxy.lua
+new file mode 100644
+index 0000000..36d133b
+--- /dev/null
++++ b/lualib/http/proxy.lua
+@@ -0,0 +1,122 @@
++-- Deliberately supports HTTP forward proxies only. Configuration errors never
++-- fall back to direct egress, and diagnostics never include proxy credentials.
++local M = {}
++
++local function authority(value, default_port, message)
++    local host, port
++    if value:sub(1, 1) == '[' then
++        host, port = value:match('^%[([%x:%.]+)%]:(%d+)$')
++        if not host then host = value:match('^%[([%x:%.]+)%]$') end
++    else
++        host, port = value:match('^([%w%.%-_]+):(%d+)$')
++        if not host then host = value:match('^([%w%.%-_]+)$') end
++    end
++    port = port and tonumber(port) or default_port
++    assert(host and port and port >= 1 and port <= 65535, message)
++    return host, port
++end
++
++local function hostport(host, port)
++    return (host:find(':', 1, true) and '['..host..']' or host)..':'..port
++end
++
++function M.origin(value)
++    assert(type(value) == 'string', 'Invalid HTTP origin')
++    local scheme, rest = value:match('^([%a]+)://(.*)$')
++    local protocol = scheme and scheme:lower() or 'http'
++    assert(protocol == 'http' or protocol == 'https', 'Unsupported origin protocol')
++    local addr = rest or value
++    local host, port = authority(addr, protocol == 'https' and 443 or 80, 'Invalid HTTP origin')
++    return {protocol = protocol, host = host, port = port, authority = addr,
++        connect_authority = hostport(host, port)}
++end
++
++local function ipv4(s)
++    local a,b,c,d = s:match('^(%d+)%.(%d+)%.(%d+)%.(%d+)$')
++    if not a then return end
++    local n = 0
++    for _,v in ipairs{a,b,c,d} do
++        v = tonumber(v)
++        if v > 255 then return end
++        n = n * 256 + v
++    end
++    return n
++end
++
++local function bypass(origin, value)
++    local hostname = origin.host:lower():gsub('%.$', '')
++    for entry in (value or ''):gmatch('[^,]+') do
++        entry = entry:match('^%s*(.-)%s*$'):lower()
++        if entry == '*' then return true end
++        local network, bits = entry:match('^([%d%.]+)/(%d+)$')
++        if network then
++            local address, base = ipv4(hostname), ipv4(network)
++            bits = tonumber(bits)
++            if address and base and bits <= 32 and (address >> (32-bits)) == (base >> (32-bits)) then
++                return true
++            end
++        else
++            local host, port
++            if entry:sub(1,1) == '[' then
++                host, port = entry:match('^%[([^%]]+)%]:(%d+)$')
++                if not host then host = entry:match('^%[([^%]]+)%]$') end
++            else
++                host, port = entry:match('^([^:]+):(%d+)$')
++                host = host or entry
++            end
++            host = host and host:gsub('^%.', ''):gsub('%.$', '')
++            if host and host ~= '' and (not port or tonumber(port) == origin.port) then
++                if hostname == host then return true end
++                if not ipv4(hostname) and not hostname:find(':',1,true) and
++                    hostname:sub(-#host-1) == '.'..host then return true end
++            end
++        end
++    end
++    return false
++end
++
++local function decode(value)
++    assert(not value:gsub('%%%x%x',''):find('%%'), 'Invalid proxy credentials')
++    local result = value:gsub('%%(%x%x)', function(hex) return string.char(tonumber(hex,16)) end)
++    assert(not result:find('[%z\r\n]'), 'Invalid proxy credentials')
++    return result
++end
++
++local function parse(value)
++    assert(type(value) == 'string', 'Invalid HTTP proxy configuration')
++    local scheme, addr = value:match('^([%a][%w+.-]*)://(.*)$')
++    assert(scheme and scheme:lower() == 'http', 'Only http:// proxies are supported')
++    addr = addr:gsub('/$', '')
++    assert(not addr:find('[/\\?#%s%z]'), 'Invalid HTTP proxy configuration')
++    local credentials, endpoint = addr:match('^(.-)@([^@]+)$')
++    local authorization
++    if credentials then
++        local user, password = credentials:match('^([^:]*):(.*)$')
++        assert(user and not credentials:find('@',1,true), 'Invalid proxy credentials')
++        user, password = decode(user), decode(password)
++        assert(not user:find(':',1,true), 'Invalid proxy username')
++        authorization = 'Basic '..require('skynet.crypt').base64encode(user..':'..password)
++    end
++    local host, port = authority(endpoint or addr, 80, 'Invalid HTTP proxy endpoint')
++    return {host = host, port = port, authorization = authorization}
++end
++
++function M.select(origin, override, getenv)
++    if override == false then return end
++    getenv = getenv or os.getenv
++    local no_proxy = getenv('no_proxy')
++    if no_proxy == nil then no_proxy = getenv('NO_PROXY') end
++    if bypass(origin, no_proxy) then return end
++    local value = override
++    if value == nil then
++        value = getenv(origin.protocol .. '_proxy')
++        -- HTTP_PROXY is deliberately ignored: CGI may derive it from a request header.
++        if value == nil and origin.protocol == 'https' then value = getenv('HTTPS_PROXY') end
++        if value == nil then value = getenv('all_proxy') end
++        if value == nil then value = getenv('ALL_PROXY') end
++    end
++    if value == nil or value == '' then return end
++    return parse(value)
++end
++
++return M

@@ -1,0 +1,12 @@
+-- Invoked from the supplied runtime directory by proxy-integration.py.
+root = "./"
+thread = 2
+harbor = 0
+enablessl = true
+bootstrap = "snlua bootstrap"
+start = "proxy-client"
+luaservice = "$PROXY_TEST_DIR/?.lua;./service/?.lua;./test/?.lua;./examples/?.lua"
+lualoader = "./lualib/loader.lua"
+lua_path = "./lualib/?.lua;./lualib/?/init.lua"
+lua_cpath = "./luaclib/?.so"
+cpath = "./cservice/?.so"

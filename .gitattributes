@@ -1,0 +1,2 @@
+# Unified diffs preserve upstream context whitespace verbatim.
+patches/*.patch -whitespace

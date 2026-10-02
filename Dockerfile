@@ -1,9 +1,12 @@
 ARG BUILDER_IMAGE=hanxi/skynet-builder@sha256:31b04c011d8d5c28840c51adececb0a5f5ceada0f50aeb46faa205e1ce552ea9
 FROM ${BUILDER_IMAGE} AS build
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev patch && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/skynet
 COPY vendor/skynet/ ./
+COPY patches/ /src/patches/
+COPY scripts/apply-skynet-patches.sh /src/scripts/apply-skynet-patches.sh
+RUN sh /src/scripts/apply-skynet-patches.sh /src/skynet
 RUN make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/usr/include && \
     mkdir -p /out/3rd/lua && \
     cp skynet /out/ && \

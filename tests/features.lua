@@ -8,7 +8,8 @@ skynet.start(function()
         skynet.error("PASS: cjson round trip and invalid JSON rejection")
         assert(require "ltls.c")
         local httpc = require "http.httpc"
-        httpc.timeout = 1000
+        -- Includes proxy CONNECT, TLS, and response; slow external proxies need headroom.
+        httpc.timeout = 3000
         local status, body = httpc.get("https://www.baidu.com", "/")
         assert(status == 200 and #body > 0, "HTTPS request failed: " .. tostring(status))
         skynet.error("PASS: HTTPS status=" .. status .. " bytes=" .. #body)
