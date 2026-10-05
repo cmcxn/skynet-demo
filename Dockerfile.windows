@@ -1,0 +1,25 @@
+ARG BUILDER_IMAGE=hanxi/skynet-builder@sha256:31b04c011d8d5c28840c51adececb0a5f5ceada0f50aeb46faa205e1ce552ea9
+FROM ${BUILDER_IMAGE} AS build
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates perl && rm -rf /var/lib/apt/lists/*
+# Static OpenSSL keeps the portable package independent of an installed OpenSSL.
+WORKDIR /src/openssl
+RUN curl -fL --retry 3 https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz -o /tmp/openssl.tar.gz && \
+    echo '603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a  /tmp/openssl.tar.gz' | sha256sum -c - && \
+    tar -xzf /tmp/openssl.tar.gz --strip-components=1 && \
+    ./Configure mingw64 --cross-compile-prefix=x86_64-w64-mingw32- --prefix=/opt/openssl no-shared no-tests no-apps && \
+    make -j4 && make install_dev && rm /tmp/openssl.tar.gz
+WORKDIR /src/skynet
+COPY vendor/skynet/ ./
+COPY scripts/windows/skynet-mingw.patch /src/windows/skynet-mingw.patch
+# Discard host build products, then cache the core build separately from packaging.
+RUN find . -type f \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dll' -o -name '*.exe' \) -delete && \
+    patch --batch --forward -p1 < /src/windows/skynet-mingw.patch && \
+    make -f mingw.mk all -j4
+COPY vendor/lua-cjson/ /src/lua-cjson/
+COPY scripts/windows/ /src/windows/
+COPY tests/client-socket.c tests/demo-client.lua tests/https-check.lua ./tests/
+RUN bash /src/windows/compile.sh
+
+FROM scratch AS package
+COPY --from=build /out/ /skynet-windows-x64/
