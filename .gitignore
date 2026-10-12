@@ -1,2 +1,5 @@
 /.idea/
 /dist/
+
+/.local/
+components/skynet-llm/luaclib/
