@@ -17,3 +17,10 @@
 !tests/features.lua
 !tests/https-check.lua
 **/.git
+
+!components/
+!components/skynet-llm/
+!components/skynet-llm/**
+components/skynet-llm/luaclib/
+
+.local/

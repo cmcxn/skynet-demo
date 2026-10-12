@@ -10,10 +10,22 @@ RUN make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/us
     cp -r cservice luaclib lualib service examples /out/ && \
     cp 3rd/lua/lua /out/3rd/lua/ && \
     printf '\nenablessl = true\n' >> /out/examples/config
+COPY components/skynet-llm/patches/skynet-1.8-socket-flow-control.patch /tmp/skynet-socket-flow-control.patch
+RUN patch -p1 < /tmp/skynet-socket-flow-control.patch && \
+    make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/usr/include && \
+    cp skynet /out/ && cp -r luaclib/. /out/luaclib/ && cp -r lualib/. /out/lualib/
 COPY vendor/lua-cjson/ /src/lua-cjson/
 RUN make -C /src/lua-cjson LUA_VERSION=5.4 LUA_INCLUDE_DIR=/src/skynet/3rd/lua CJSON_CFLAGS="-fpic -pthread -DMULTIPLE_THREADS" CJSON_LDFLAGS="-shared -pthread -lm" && \
     cp /src/lua-cjson/cjson.so /out/luaclib/ && \
     cp -r /src/lua-cjson/lua/cjson /out/lualib/
+COPY components/skynet-llm/ /src/skynet-llm/
+RUN make -C /src/skynet-llm LUA_INC=/src/skynet/3rd/lua OUT_DIR=/out/luaclib && \
+    cp -r /src/skynet-llm/lualib/. /out/lualib/ && \
+    cp -r /src/skynet-llm/service/. /out/service/ && \
+    mkdir -p /out/licenses/skynet-llm && \
+    cp /src/skynet-llm/LICENSE /out/licenses/skynet-llm/ && \
+    cp -r /src/skynet-llm/patches /out/licenses/skynet-llm/ && \
+    mkdir -p /out/licenses/skynet && cp /src/skynet/LICENSE /out/licenses/skynet/
 COPY tests/client-socket.c tests/client-socket.c
 RUN mkdir -p /out/tests/client && \
     gcc -O2 -fPIC -shared -I3rd/lua tests/client-socket.c -o /out/tests/client/socket.so -lpthread

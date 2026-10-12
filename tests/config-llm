@@ -1,0 +1,15 @@
+root = "/skynet/"
+thread = 4
+harbor = 0
+start = "$LLM_TEST_SERVICE"
+bootstrap = "snlua bootstrap"
+luaservice = "/workspace/components/skynet-llm/service/?.lua;/workspace/components/skynet-llm/tests/?.lua;/workspace/components/skynet-llm/?.lua;/skynet/service/?.lua"
+lualoader = "/skynet/lualib/loader.lua"
+lua_path = "/workspace/components/skynet-llm/lualib/?.lua;/workspace/components/skynet-llm/?.lua;/workspace/components/skynet-llm/tests/?.lua;/skynet/lualib/?.lua;/skynet/lualib/?/init.lua"
+lua_cpath = "/workspace/components/skynet-llm/luaclib/?.so;/skynet/luaclib/?.so"
+cpath = "/skynet/cservice/?.so"
+logger = nil
+logservice = "logger"
+enablessl = true
+llm_test_host = "mock"
+llm_test_ca = "/workspace/.local/llm-fixtures/ca.pem"
