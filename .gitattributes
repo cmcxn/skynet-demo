@@ -1,0 +1,2 @@
+# Unified diff context preserves upstream tabs and blank lines.
+components/skynet-llm/patches/*.patch -whitespace

@@ -1,0 +1,370 @@
+diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
+--- a/skynet-src/socket_server.c
++++ b/skynet-src/socket_server.c
+@@ -98,6 +98,7 @@
+ 	ATOM_INT type;
+ 	uint8_t protocol;
+ 	bool reading;
++	int read_limit; // opt-in one-shot TCP receive credit; 0 keeps normal reads
+ 	bool writing;
+ 	bool closing;
+ 	ATOM_INT udpconnecting;
+@@ -133,6 +134,7 @@
+ struct request_open {
+ 	int id;
+ 	int port;
++	int read_limit;
+ 	uintptr_t opaque;
+ 	char host[1];
+ };
+@@ -174,6 +176,8 @@
+ 
+ struct request_resumepause {
+ 	int id;
++	int read_limit;
++	int register_only;
+ 	uintptr_t opaque;
+ };
+ 
+@@ -578,6 +582,7 @@
+ 	s->id = id;
+ 	s->fd = fd;
+ 	s->reading = true;
++	s->read_limit = 0;
+ 	s->writing = false;
+ 	s->closing = false;
+ 	ATOM_INIT(&s->sending , ID_TAG16(id) << 16 | 0);
+@@ -657,12 +662,13 @@
+ 		goto _failed;
+ 	}
+ 
+-	ns = new_fd(ss, id, sock, PROTOCOL_TCP, request->opaque, true);
++	ns = new_fd(ss, id, sock, PROTOCOL_TCP, request->opaque, request->read_limit == 0);
+ 	if (ns == NULL) {
+ 		result->data = "reach skynet socket number limit";
+ 		goto _failed;
+ 	}
+ 
++	ns->read_limit = request->read_limit;
+ 	if(status == 0) {
+ 		ATOM_STORE(&ns->type , SOCKET_TYPE_CONNECTED);
+ 		struct sockaddr * addr = ai_ptr->ai_addr;
+@@ -1224,7 +1230,10 @@
+ 	}
+ 	struct socket_lock l;
+ 	socket_lock_init(s, &l);
+-	if (enable_read(ss, s, true)) {
++	if (request->read_limit >= 0) {
++		s->read_limit = request->read_limit;
++	}
++	if (enable_read(ss, s, !request->register_only)) {
+ 		result->data = "enable read failed";
+ 		return SOCKET_ERR;
+ 	}
+@@ -1461,6 +1470,9 @@
+ static int
+ forward_message_tcp(struct socket_server *ss, struct socket *s, struct socket_lock *l, struct socket_message * result) {
+ 	int sz = s->p.size;
++	if (s->read_limit > 0 && sz > s->read_limit) {
++		sz = s->read_limit;
++	}
+ 	char * buffer = MALLOC(sz);
+ 	int n = (int)read(s->fd, buffer, sz);
+ 	if (n<0) {
+@@ -1503,6 +1515,12 @@
+ 		return -1;
+ 	}
+ 
++	// Consume this grant before posting DATA, including short reads.
++	// The next grant is issued only after Lua has consumed this DATA.
++	if (s->read_limit > 0 && enable_read(ss, s, false)) {
++		FREE(buffer);
++		return report_error(s, result, "disable read failed");
++	}
+ 	stat_read(ss,s,n);
+ 
+ 	result->opaque = s->opaque;
+@@ -1511,8 +1529,10 @@
+ 	result->data = buffer;
+ 
+ 	if (n == sz) {
+-		s->p.size *= 2;
+-		return SOCKET_MORE;
++		if (s->read_limit == 0 || sz < s->read_limit) {
++			s->p.size *= 2;
++		}
++		return s->read_limit > 0 ? SOCKET_DATA : SOCKET_MORE;
+ 	} else if (sz > MIN_READ_BUFFER && n*2 < sz) {
+ 		s->p.size /= 2;
+ 	}
+@@ -1759,12 +1779,13 @@
+ 			skynet_error(NULL, "socket-server: invalid socket");
+ 			break;
+ 		default:
+-			if (e->read) {
++			if (e->read && s->reading) {
+ 				int type;
+ 				if (s->protocol == PROTOCOL_TCP) {
+ 					type = forward_message_tcp(ss, s, &l, result);
+ 					if (type == SOCKET_MORE) {
+ 						--ss->event_index;
++						ss->checkctrl = 1;
+ 						return SOCKET_DATA;
+ 					}
+ 				} else {
+@@ -1772,6 +1793,7 @@
+ 					if (type == SOCKET_UDP) {
+ 						// try read again
+ 						--ss->event_index;
++						ss->checkctrl = 1;
+ 						return SOCKET_UDP;
+ 					}
+ 				}
+@@ -1849,6 +1871,7 @@
+ 	req->u.open.opaque = opaque;
+ 	req->u.open.id = id;
+ 	req->u.open.port = port;
++	req->u.open.read_limit = 0;
+ 	memcpy(req->u.open.host, addr, len);
+ 	req->u.open.host[len] = '\0';
+ 
+@@ -1857,10 +1880,16 @@
+ 
+ int 
+ socket_server_connect(struct socket_server *ss, uintptr_t opaque, const char * addr, int port) {
++	return socket_server_connect_read_limit(ss, opaque, addr, port, 0);
++}
++
++int
++socket_server_connect_read_limit(struct socket_server *ss, uintptr_t opaque, const char *addr, int port, int read_limit) {
+ 	struct request_package request;
+ 	int len = open_request(ss, &request, opaque, addr, port);
+ 	if (len < 0)
+ 		return -1;
++	request.u.open.read_limit = read_limit;
+ 	send_request(ss, &request, 'O', sizeof(request.u.open) + len);
+ 	return request.u.open.id;
+ }
+@@ -2086,8 +2115,15 @@
+ 
+ void
+ socket_server_start(struct socket_server *ss, uintptr_t opaque, int id) {
++	socket_server_start_read_limit(ss, opaque, id, -1, 0);
++}
++
++void
++socket_server_start_read_limit(struct socket_server *ss, uintptr_t opaque, int id, int read_limit, int register_only) {
+ 	struct request_package request;
+ 	request.u.resumepause.id = id;
++	request.u.resumepause.read_limit = read_limit;
++	request.u.resumepause.register_only = register_only;
+ 	request.u.resumepause.opaque = opaque;
+ 	send_request(ss, &request, 'R', sizeof(request.u.resumepause));
+ }
+diff --git a/skynet-src/socket_server.h b/skynet-src/socket_server.h
+--- a/skynet-src/socket_server.h
++++ b/skynet-src/socket_server.h
+@@ -36,6 +36,8 @@
+ void socket_server_close(struct socket_server *, uintptr_t opaque, int id);
+ void socket_server_shutdown(struct socket_server *, uintptr_t opaque, int id);
+ void socket_server_start(struct socket_server *, uintptr_t opaque, int id);
++void socket_server_start_read_limit(struct socket_server *, uintptr_t opaque, int id, int read_limit, int register_only);
++int socket_server_connect_read_limit(struct socket_server *, uintptr_t opaque, const char *addr, int port, int read_limit);
+ void socket_server_pause(struct socket_server *, uintptr_t opaque, int id);
+ 
+ // return -1 when error
+diff --git a/skynet-src/skynet_socket.h b/skynet-src/skynet_socket.h
+--- a/skynet-src/skynet_socket.h
++++ b/skynet-src/skynet_socket.h
+@@ -35,6 +35,8 @@
+ void skynet_socket_close(struct skynet_context *ctx, int id);
+ void skynet_socket_shutdown(struct skynet_context *ctx, int id);
+ void skynet_socket_start(struct skynet_context *ctx, int id);
++void skynet_socket_start_read_limit(struct skynet_context *ctx, int id, int read_limit, int register_only);
++int skynet_socket_connect_read_limit(struct skynet_context *ctx, const char *host, int port, int read_limit);
+ void skynet_socket_pause(struct skynet_context *ctx, int id);
+ void skynet_socket_nodelay(struct skynet_context *ctx, int id);
+ 
+diff --git a/skynet-src/skynet_socket.c b/skynet-src/skynet_socket.c
+--- a/skynet-src/skynet_socket.c
++++ b/skynet-src/skynet_socket.c
+@@ -163,6 +163,18 @@
+ }
+ 
+ void
++skynet_socket_start_read_limit(struct skynet_context *ctx, int id, int read_limit, int register_only) {
++	uint32_t source = skynet_context_handle(ctx);
++	socket_server_start_read_limit(SOCKET_SERVER, source, id, read_limit, register_only);
++}
++
++int
++skynet_socket_connect_read_limit(struct skynet_context *ctx, const char *host, int port, int read_limit) {
++	uint32_t source = skynet_context_handle(ctx);
++	return socket_server_connect_read_limit(SOCKET_SERVER, source, host, port, read_limit);
++}
++
++void
+ skynet_socket_pause(struct skynet_context *ctx, int id) {
+ 	uint32_t source = skynet_context_handle(ctx);
+ 	socket_server_pause(SOCKET_SERVER, source, id);
+diff --git a/lualib-src/lua-socket.c b/lualib-src/lua-socket.c
+--- a/lualib-src/lua-socket.c
++++ b/lualib-src/lua-socket.c
+@@ -467,6 +467,21 @@
+ }
+ 
+ static int
++lconnect_read_limit(lua_State *L) {
++	size_t sz = 0;
++	const char *addr = luaL_checklstring(L, 1, &sz);
++	char tmp[sz];
++	int port = 0;
++	const char *host = address_port(L, tmp, addr, 2, &port);
++	lua_Integer read_limit = luaL_checkinteger(L, 3);
++	luaL_argcheck(L, port > 0, 2, "invalid port");
++	luaL_argcheck(L, read_limit > 0 && read_limit <= 128 * 1024, 3, "receive credit must be 1..131072");
++	struct skynet_context *ctx = lua_touserdata(L, lua_upvalueindex(1));
++	lua_pushinteger(L, skynet_socket_connect_read_limit(ctx, host, port, read_limit));
++	return 1;
++}
++
++static int
+ lclose(lua_State *L) {
+ 	int id = luaL_checkinteger(L,1);
+ 	struct skynet_context * ctx = lua_touserdata(L, lua_upvalueindex(1));
+@@ -616,6 +631,17 @@
+ 	struct skynet_context * ctx = lua_touserdata(L, lua_upvalueindex(1));
+ 	int id = luaL_checkinteger(L, 1);
+ 	skynet_socket_start(ctx,id);
++	return 0;
++}
++
++static int
++lstart_read_limit(lua_State *L) {
++	struct skynet_context *ctx = lua_touserdata(L, lua_upvalueindex(1));
++	int id = luaL_checkinteger(L, 1);
++	lua_Integer read_limit = luaL_checkinteger(L, 2);
++	luaL_argcheck(L, read_limit > 0 && read_limit <= 128 * 1024, 2, "receive credit must be 1..131072");
++	luaL_argcheck(L, lua_isnoneornil(L, 3) || lua_isboolean(L, 3), 3, "registration flag must be boolean");
++	skynet_socket_start_read_limit(ctx, id, read_limit, lua_toboolean(L, 3));
+ 	return 0;
+ }
+ 
+@@ -876,6 +902,7 @@
+ 	luaL_newlib(L,l);
+ 	luaL_Reg l2[] = {
+ 		{ "connect", lconnect },
++		{ "connect_read_limit", lconnect_read_limit },
+ 		{ "close", lclose },
+ 		{ "shutdown", lshutdown },
+ 		{ "listen", llisten },
+@@ -883,6 +910,7 @@
+ 		{ "lsend", lsendlow },
+ 		{ "bind", lbind },
+ 		{ "start", lstart },
++		{ "start_read_limit", lstart_read_limit },
+ 		{ "pause", lpause },
+ 		{ "nodelay", lnodelay },
+ 		{ "udp", ludp },
+diff --git a/lualib/skynet/socket.lua b/lualib/skynet/socket.lua
+--- a/lualib/skynet/socket.lua
++++ b/lualib/skynet/socket.lua
+@@ -46,9 +46,15 @@
+ 	s.co = coroutine.running()
+ 	if s.pause then
+ 		skynet.error(string.format("Resume socket (%d)", s.id))
+-		driver.start(s.id)
+-		skynet.wait(s.co)
+-		s.pause = nil
++		if s.read_limit then
++			s.pause = nil
++			driver.start_read_limit(s.id, s.read_limit)
++			skynet.wait(s.co) -- DATA sets the next bounded pause before wakeup.
++		else
++			driver.start(s.id)
++			skynet.wait(s.co)
++			s.pause = nil
++		end
+ 	else
+ 		skynet.wait(s.co)
+ 	end
+@@ -69,6 +75,7 @@
+ 		return
+ 	end
+ 
++	if s.read_limit then s.pause = true end -- native already paused this grant
+ 	local sz = driver.push(s.buffer, s.pool, data, size)
+ 	local rr = s.read_required
+ 	local rrt = type(rr)
+@@ -207,7 +214,7 @@
+ 	end
+ }
+ 
+-local function connect(id, func)
++local function connect(id, func, read_limit)
+ 	local newbuffer
+ 	if func == nil then
+ 		newbuffer = driver.buffer()
+@@ -222,6 +229,7 @@
+ 		co = false,
+ 		callback = func,
+ 		protocol = "TCP",
++		read_limit = read_limit,
+ 	}
+ 	assert(not socket_onclose[id], "socket has onclose callback")
+ 	local s2 = socket_pool[id]
+@@ -230,6 +238,7 @@
+ 	end
+ 	socket_pool[id] = s
+ 	suspend(s)
++	if read_limit then s.pause = true end -- connect was atomically read-paused
+ 	local err = s.connecting
+ 	s.connecting = nil
+ 	if s.connected then
+@@ -257,6 +266,14 @@
+ function socket.start(id, func)
+ 	driver.start(id)
+ 	return connect(id, func)
++end
++
++-- Private paired adapter for driver.connect_read_limit: registration replays
++-- OPEN while keeping native reads paused, even if the first OPEN was missed.
++function socket.start_read_limit(id, read_limit)
++	assert(type(read_limit) == "number" and read_limit > 0 and read_limit <= 128 * 1024 and read_limit % 1 == 0, "invalid receive credit")
++	driver.start_read_limit(id, read_limit, true) -- registration, no read grant
++	return connect(id, nil, read_limit)
+ end
+ 
+ function socket.pause(id)
+@@ -305,6 +322,7 @@
+ function socket.read(id, sz)
+ 	local s = socket_pool[id]
+ 	assert(s)
++	assert(not s.read_limit or sz == nil, "bounded receives require read-any mode")
+ 	if sz == nil then
+ 		-- read some bytes
+ 		local ret = driver.readall(s.buffer, s.pool)
+@@ -348,6 +366,7 @@
+ function socket.readall(id)
+ 	local s = socket_pool[id]
+ 	assert(s)
++	assert(not s.read_limit, "bounded receives require read-any mode")
+ 	if not s.connected then
+ 		local r = driver.readall(s.buffer, s.pool)
+ 		return r ~= "" and r
+@@ -363,6 +382,7 @@
+ 	sep = sep or "\n"
+ 	local s = socket_pool[id]
+ 	assert(s)
++	assert(not s.read_limit, "bounded receives require read-any mode")
+ 	local ret = driver.readline(s.buffer, s.pool, sep)
+ 	if ret then
+ 		return ret
+@@ -382,6 +402,7 @@
+ 
+ function socket.block(id)
+ 	local s = socket_pool[id]
++	assert(not s or not s.read_limit, "bounded receives require read-any mode")
+ 	if not s or not s.connected then
+ 		return false
+ 	end
