@@ -1,6 +1,6 @@
 # skynet-llm 第一版设计
 
-日期：2026-10-12。状态：设计范围已在对话中确认，本文待书面审阅；尚未实现。
+日期：2026-10-12。状态：组件已实现，最终 Linux Docker 镜像完成本地验收与独立审阅；真实模型服务有两项 Responses 能力不兼容，详见第 10 节。
 
 ## 1. 目标与边界
 
@@ -58,9 +58,11 @@ components/skynet-llm/
         sse.lua                    # 与 TCP/HTTP chunk 边界无关
   lualib-src/
     skynet_llm_tls.c               # 独立 TLS 客户端扩展
+  patches/
+    skynet-1.8-socket-flow-control.patch # 固定版本的按需读取扩展
   service/
     skynet_llm.lua                 # 单节点管理服务
-    skynet_llm_worker.lua          # 每个 worker 最多一个在途请求
+    skynet_llm_worker.lua          # 每次尝试私有 worker，清理后退出
   examples/
     chat.lua
     chat_tools.lua
@@ -172,7 +174,7 @@ err = {
 
 公共 JSON 接口为 `llm.json.object(t)`、`llm.json.array(t)`、`llm.json.null`、`encode/decode`。空 `{}` 默认对象；空数组必须显式标记。解码保留 `[]`、`{}` 和 `null` 的区别；整数键稠密列表可推断为数组，混合键、稀疏数组、循环引用和非有限数字拒绝编码。
 
-当前 lua-cjson 的全局空表开关无法同时表达空对象和空数组，因此组件采用保留容器类型的 codec，不把当前 cjson 解码结果作为唯一结构依据。JSON Schema、工具参数、`content=null` 和空列表必须能往返。跨 Skynet 服务调用传 JSON 字符串及普通元信息，在服务边界重新解码，避免序列化丢失 metatable/null 身份；业务跨服务传递原生 `data` 时也须使用该 codec。
+当前 `skynet_llm.json` 是纯 Lua codec，负责保留容器类型、数值精度和有界编码；`vendor/lua-cjson` 是项目原有的通用 C JSON 依赖，组件没有通过它编码或解码。当前 lua-cjson 的全局空表开关无法同时表达空对象和空数组，因此不能直接替换组件 codec。JSON Schema、工具参数、`content=null` 和空列表必须能往返。跨 Skynet 服务调用传 JSON 字符串及普通元信息，在服务边界重新解码，避免序列化丢失 metatable/null 身份；业务跨服务传递原生 `data` 时也须使用该 codec。后续替换内部实现须保持公共契约并通过同一测试。
 
 ## 5. 三种 API 的协议约定
 
@@ -300,13 +302,13 @@ Chat 流的最终 `result.data` 是按原生字段组装的响应，`meta.assemb
 业务执行工具 ← 完整工具调用/流式事件 ← 原生响应
 ```
 
-管理服务拥有入队、派发、终态和预算；每个 worker 同时只执行一个请求。最大活跃 worker 数受各 budget_group 的 max_inflight 限制。队列按优先级选择，同优先级 FIFO；每等待 1000ms 提升一个有效优先级，最高为 3，达到同优先级后按原入队时间排序，避免持续高优先级请求饿死旧请求。
+管理服务拥有入队、派发、终态和预算；每个 worker 同时只执行一个请求。首版为每次尝试创建私有 worker，在传输清理后退出，不复用连接或 worker。最大活跃 worker 数受各 budget_group 的 max_inflight 限制。队列按优先级选择，同优先级 FIFO；每等待 1000ms 提升一个有效优先级，最高为 3，达到同优先级后按原入队时间排序，避免持续高优先级请求饿死旧请求。
 
 状态机为 `queued → connecting → sending → receiving → completed/failed/cancelled`，重试通过独立 `retry_wait` 状态回到预算队列。终态只能设置一次，每次尝试的 socket/TLS 只清理一次，预算只释放一次。重试等待不占在途槽，但请求仍计入队列容量，不得绕过排队限制。再次入队时若 max_queue 已满，则终止重试并返回最近一次失败，附 `retry_stopped="queue_full"`，不扩大队列；每次重新入队的局部排队时限重新计算，总期限不重置。
 
-总期限从 facade 提交时开始，涵盖队列、DNS、连接、TLS、写入、读取、重试等待。所有子超时取剩余总期限与局部期限的较小值；公开单位毫秒，转换 Skynet tick 时向上取整。每个定时器校验请求 token/attempt generation，防止旧回调关闭复用 worker 的新连接。明确使用异步 DNS；不得用会阻塞整个 Skynet socket 线程的解析路径。
+总期限从 facade 调用入口开始，涵盖编码、队列、DNS、连接、TLS、写入、读取、重试等待。所有子超时取剩余总期限与局部期限的较小值；公开单位毫秒，转换 Skynet tick 时向上取整。每个定时器校验请求 token/attempt generation，防止旧回调影响后续尝试。明确使用异步 DNS；不得用会阻塞整个 Skynet socket 线程的解析路径。
 
-DNS 通过独立适配器先解析成数字 IP，再交给连接层。原 skynet.dns.resolve 的固定超时和不可取消查询不能直接作为调用 deadline：管理层到期立即结束请求、失效 token，丢弃迟到解析结果；未完成 DNS 操作计入独立有界配额（默认 16），避免不断超时后积累后台查询。连接层必须在等待完成前拥有 socket ID，才能取消尚未建立的连接；这一适配需通过连接失败与取消竞态测试，不能继续采用先阻塞 socket.open、超时后等其返回的方式。
+DNS 通过独立适配器先解析成数字 IP，再交给连接层。实现采用请求自己持有的异步 UDP 查询 socket，到期/取消即关闭，不使用原 skynet.dns.resolve 的固定 30 秒后台等待。因此 DNS 操作由活跃 worker 数限制，没有跨请求遗留查询，也无需单独为不可取消查询设置 16 项配额。首版只解析 IPv4 A 记录，截断 DNS 响应明确失败。连接层在等待完成前拥有 socket ID，才能取消尚未建立的连接；这一适配需通过连接失败与取消竞态测试，不能继续采用先阻塞 socket.open、超时后等其返回的方式。
 
 取消、调用方退出、worker 异常和超时均需要独立清理路径。能观察到服务退出时立即清理；即使退出通知缺失，总期限和流式消费期限仍作为资源回收兜底。worker 死亡由管理服务的在途调用失败/存活检查回收；不能只依赖业务来执行 finally。失联 worker 先终止并确认其 socket 被清理，再补新 worker，不重复派发旧请求。管理服务异常重启不自动重放旧请求；旧 facade 返回服务不可用错误。
 
@@ -323,14 +325,23 @@ DNS 通过独立适配器先解析成数字 IP，再交给连接层。原 skynet
 | 每个 budget_group 未结束消费的流数量 | 16（从入队至取走结果/取消/过期） |
 | 事件缓存持续无消费时间 | 5000ms |
 | 上游终止后未取走的流结果保留时间 | 30000ms |
+| 普通终态结果未被调用方领取的兜底保留 | 最多 30000ms，与原调用期限独立 |
 
 流控采用 pull：每次 next 同时确认上一条事件已交付给 facade，并索取下一条；内部事件携带递增序号，重复确认幂等。result 在 facade 内执行同样的消费循环。不使用无界 `skynet.send` 向业务邮箱不断塞事件。缓存达到上限后暂停读取，消费恢复后继续；等待空间超时则 `consumer_too_slow` 并关闭连接。worker 独占 socket/TLS/解析器，管理服务拥有请求终态与缓存额度；取消和超时同时唤醒网络等待及消费等待。必须同时限制底层 socket 缓冲区和 HTTP/TLS 解帧缓冲区；不能为了读取一个巨大 HTTP chunk 先分配整个 chunk。主动暂停期间用消费超时管理，网络 idle 计时仅在实际等待网络输入时运行，总期限一直有效。
 
 上游终止后先清理 socket/TLS，再释放在途槽；管理服务保存待消费事件/结果。流在入队时预占独立的 max_pending_streams 配额（默认 16），整个排队/执行/待消费过程占用它，因此上游完成时无需临时争抢结果存储槽；配额满则拒绝新的流式调用。该配额与 max_queue、max_inflight 分别校验。next 读完事件不会删除最终结果；result 把结果取回 facade 后释放服务端配额，facade 缓存终态以支持重复 result。超出保留期限而尚未取回则返回 stream_expired；原请求成功终态不因此被改写。非流式结果在 RPC 回复后释放，业务持有的 table 内存由业务管理。
 
+过期时立即删除完整请求/结果记录，仅保留最多 1024 项、30 秒有效的小型过期标记；公开 facade 中的有效旧流句柄在标记淘汰后仍映射为 stream_expired。事件消费计时从缓存首次收到事件开始，排队和等待首 token 的时间不计为慢消费者时间。
+
 ## 8. HTTP/TLS 与重试
 
 组件拥有自己的 transport，复用 Skynet socket 接口及可复用的 HTTP 头解析逻辑，自己控制增量正文 framing、连接和超时；不直接包装当前 `httpc.request_stream` 作为完整可靠层。首版 HTTP/1.1，每次请求独立连接，无连接池、无自动重定向、无隐式环境代理。发送 `Accept-Encoding: identity`；不支持的压缩返回明确协议错误，避免误解码和解压大小失控。
+
+压力测试发现固定 Skynet v1.8.0 的 Lua pause 只能在 DATA 消息被处理后发出；socket 线程可能在此之前积压大量数据。连续 SOCKET_MORE/UDP 读取还会延后处理控制管道，旧读事件也未检查暂停状态。只增加 Lua 缓冲上限或限制普通单批读取大小都不能保证严格背压。
+
+Docker 在 `/src/skynet` 编译副本上应用 `patches/skynet-1.8-socket-flow-control.patch`。补丁为模型连接提供显式启用的原生单次读取许可：`socketdriver.connect_read_limit(host,port,B)` 创建的连接在原生层即为暂停读取状态，`socket.start_read_limit(fd,B)` 注册对应 Lua socket。注册时内部调用 `socketdriver.start_read_limit(fd,B,true)`，只重放 OPEN 通知而不允许读取，避免早期通知已发生时丢失连接注册；即使内部 on_fd 回调让出协程也能完成注册。随后每次不带注册标志的读取许可只产生一批不超过 128 KiB 的 DATA，短读也消耗本次许可，socket 线程在投递消息前暂停。Lua adapter 只在上一批数据已消费且 read-any 缓冲为空时发出下一次许可，读取许可不积累。该模式只支持 read-any，显式拒绝定长 read、readline、readall 等不适配操作。普通 socket 沿用原有读取模式，不施加全局 64 KiB 限制。补丁同时及时检查控制命令并跳过已暂停 socket 的旧读事件。
+
+补丁由本次开发编写，针对固定 v1.8.0 提交 `ba64be6f9fa044933c77de1317f466afbade8eaa`，不是上游发布或网上下载的现成修复。它涉及 `socket_server.c/.h`、`skynet_socket.c/.h`、`lua-socket.c` 和 `socket.lua` 六个文件。Git 子模块检出及固定提交保持原样，依赖补丁和许可随镜像保存。其他项目接入需要配套原生接口与 Lua adapter；接口缺失返回 `unsupported_capability`，不能静默退回无界模式。升级 Skynet 时必须重新审阅、移植并测试该非官方扩展。最终补丁已通过延迟 Lua 消费、近 32 MiB 流、多次暂停恢复、取消及普通 socket 回归的独立验证，压力测试观测到 DATA 批次不超过 131072 字节。
 
 TLS 使用组件独立的 `skynet_llm_tls` C 扩展，采用 OpenSSL 3 客户端 API，独立模块名、metatable、context 和 userdata 生命周期。可参考 MIT 许可的 ltls memory BIO 适配方式，保留来源说明；不修改固定的 Skynet 子模块，不依赖原 ltls 的全局初始化开关，也不调用影响同进程其他模块的 OpenSSL 全局 cleanup。
 
@@ -367,6 +378,10 @@ TLS 使用组件独立的 `skynet_llm_tls` C 扩展，采用 OpenSSL 3 客户端
 9. **集成**：在当前镜像实际启动 Skynet，运行五个组件示例；保留现有 TCP/JSON/HTTPS 测试通过；检查发布产物与日志无密钥。原 HTTPS 示例的验证边界仍按 README 如实描述。
 
 完成这些验收后才称第一版可用。代码构建通过或成功请求一次模型不等于可靠性验收完成。
+
+2026-10-12 最终镜像的 mock 验证通过：协议 31 项、SSE 6 项、源码模式与安装版 transport 各 35 项，client、lifecycle、安装版 client 和五个示例全部通过；安装版 client/transport 以 UID 1000 使用镜像内组件和 C 扩展。原有 TCP demo、lua-cjson 和 HTTPS 示例回归通过。协议、运行时和传输层独立审阅完成；安装产物、补丁及许可证核对一致，待提交源文件检查未包含实际密钥。
+
+同一最终镜像的真实服务验证记录为 8 项通过、2 项供应商不兼容：Chat、Chat SSE、function tools、Chat 工具续接、Chat 工具流、Embeddings、非流式 Responses 和 Responses function tools 通过；embedding 模型返回 2560 维向量。Responses SSE 缺少关联索引，reasoning 的 encrypted_content 为空，标准流聚合与无状态工具续接分别被安全拒绝。测试保留 `INCOMPATIBLE` 并按预期退出 1。测试端点和模型名参考 mao 配置，实际有效密钥由用户提供，仅保存在 Git/Docker 均忽略的 `.local/mao-models.env`，权限 0600。
 
 ## 11. 设计取舍与依据
 

@@ -88,3 +88,9 @@ docker compose exec -T skynet sh -c 'rm -f /tmp/skynet-features-result; ./skynet
 验证 JSON 编解码、拒绝无效 JSON、TLS 模块加载，以及向 `https://www.baidu.com/`、`https://httpbin.org/ip` 发起真实请求并解析 IP JSON（需要外网连接）。
 
 Skynet v1.8.0 的原生 TLS 客户端没有启用服务端证书验证；安装 CA 证书不会自动改变这一行为。当前测试证明 TLS 加密请求可用，不证明证书及主机名验证已启用。
+
+## Skynet 模型调用组件
+
+`components/skynet-llm` 提供 Chat Completions、Responses、Embeddings 和 SSE，工具执行留在业务层。Docker 构建会安装 Lua 模块、管理/worker 服务和独立的 OpenSSL TLS 扩展；该扩展启用证书链及主机名校验。
+
+使用方法见 [组件 README](components/skynet-llm/README.md)。运行 `./scripts/test-llm.sh mock` 验证本地协议、调度和 TLS 故障场景；`./scripts/test-llm.sh real` 使用 `.local/mao-models.env` 测试真实模型。`.local/` 已被 Git 与 Docker 构建排除。
