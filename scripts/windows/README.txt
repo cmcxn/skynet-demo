@@ -62,3 +62,10 @@ It includes the unofficial one-shot receive-credit patch (128 KiB per
 grant) and a Windows UDP error-code fix. These patches apply only to build
 copies; originals and licenses
 are in licenses/. Future Skynet upgrades require reviewing both patches.
+
+Wine 10.0 x64 (Docker) verification: offline BAT and native TLS load, original
+demo/JSON/HTTPS/TCP checks, 36 transport checks, client and lifecycle checks.
+Near-32-MiB streaming and cancellation stayed within the 128-KiB receive bound.
+Live Wine model checks returned 8 PASS and the same 2 provider incompatibilities
+listed above. Wine used an explicit DNS override; the Windows PowerShell DNS
+discovery script still needs validation on a Windows PC.

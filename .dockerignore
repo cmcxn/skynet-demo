@@ -1,6 +1,7 @@
 *
 !Dockerfile
 !Dockerfile.windows
+!Dockerfile.wine
 !scripts/
 !scripts/windows/
 !scripts/windows/**

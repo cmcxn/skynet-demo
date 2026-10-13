@@ -97,3 +97,14 @@ Skynet v1.8.0 的原生 TLS 客户端没有启用服务端证书验证；安装 
 
 
 便携包同时包含 `skynet-llm` 服务、经过验证的独立 TLS 模块、CA 证书和按需读取补丁。先双击 `test-llm-offline.bat` 检查 DLL、CA、31 项协议和 6 项 SSE 测试；再把 `llm-settings.example.bat` 复制为 `llm-settings.bat`，填写自己的模型密钥，双击 `test-llm.bat` 进行真实调用。无需先启动 `start.bat`。模型结果保存在包内 `llm-real-result.json` 和 `llm-test.log`；包内没有真实密钥。Windows DNS 默认从系统网卡发现，可在私有配置中指定 `SKYNET_LLM_DNS_SERVER`（IPv4，可带端口）。新 TLS 模块使用包内 PEM 信任库，保留证书和主机名校验。编译和 PE/DLL 依赖检查在 Docker 中完成，Windows 实机运行仍需测试。
+
+已在 Docker 内使用 Wine 10.0 x64 执行 Windows 二进制，验证离线 BAT、TLS、原有 demo/JSON/HTTPS/TCP、36 项传输测试、客户端和生命周期，以及近 32 MiB 流与取消。测试发现并补充了 Windows UDP `recvfrom` 的 Winsock 错误码转换；离线 BAT 包含对应回归程序。真实模型为 8 项通过、2 项已知 Responses 服务不兼容。Wine 测试显式指定 DNS，Windows PowerShell 自动发现部分仍需实机验证。
+
+本机已验证的 Wine 环境固定为 `skynet-wine-test:10.0-amd64`。日常直接复用该镜像，不需要重新安装 Wine。离线备份为 `dist/skynet-wine-test-10.0-amd64.tar.gz`，不纳入 Git；镜像被删除后可以恢复：
+
+```sh
+gzip -dc dist/skynet-wine-test-10.0-amd64.tar.gz | docker load
+docker run --rm skynet-wine-test:10.0-amd64 /usr/lib/wine/wine64 --version
+```
+
+需要重建时使用 `docker build --platform linux/amd64 -f Dockerfile.wine -t skynet-wine-test:10.0-amd64 .`。构建文件锁定 Debian 基底摘要及 Wine `10.0~repack-6`；其他 APT 依赖仍取构建时仓库版本，因此完整一致的恢复优先使用离线备份。镜像仅包含测试工具，Windows 包、结果、Wine prefix 和模型密钥均在运行时单独提供，不应通过 `docker commit` 保存测试容器。
