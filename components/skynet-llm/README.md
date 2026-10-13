@@ -2,7 +2,7 @@
 
 Skynet + Lua 5.4 模型调用组件，支持原生 Chat Completions、Responses、Embeddings 和 Chat/Responses SSE。业务负责工具执行、提示词和会话历史；组件负责模型协议、预算队列、超时、取消、有限重试及 HTTPS 证书校验。
 
-首版在 Linux Docker 中构建和验证。`skynet_llm_tls` 链接 OpenSSL 3，编译时使用运行 Skynet 的 Lua 头文件。Windows/macOS 原生构建尚未验证，动态库不能跨平台复制。Skynet Git 子模块检出无需修改。
+首版在 Linux Docker 中构建和验证。`skynet_llm_tls` 链接 OpenSSL 3，编译时使用运行 Skynet 的 Lua 头文件。Windows x64 便携测试包可通过仓库根目录 `scripts/build-windows.sh` 交叉编译，包含独立 TLS DLL、CA 和测试入口；Windows 实机运行与 macOS 原生构建尚未验证，动态库不能跨平台复制。Skynet Git 子模块检出无需修改。
 
 Skynet v1.8.0 中依赖 Lua 处理 DATA 后再暂停的流控，不能阻止 socket 线程提前积压数据。本仓库 Dockerfile 在编译副本上应用 `patches/skynet-1.8-socket-flow-control.patch`，为模型连接增加按需读取模式：连接建立时就暂停读取，注册 Lua socket 时重放 OPEN 通知且保持暂停；每次许可只接收一批最多 128 KiB 的数据，在投递 DATA 消息前再次暂停；Lua 消费完这批数据后才发下一次许可。普通 socket 仍使用原有读取模式，没有全局 64 KiB 读取限制。最终补丁已通过近 32 MiB 流、多次暂停恢复、延迟 Lua 消费和取消测试及独立复核。
 
@@ -136,6 +136,8 @@ local vectors = res and llm.embeddings.vectors(res)
 默认校验证书链、有效期、DNS 主机名/IP SAN，最低 TLS 1.2。信任库来自 OpenSSL 默认路径，不自动读取 macOS Keychain。私有 CA 用 `tls={ca_file="..."}`；仅信任该 CA 可加 `use_default_ca=false`。不提供跳过验证或 HTTPS 失败后降级 HTTP。
 
 首版 IPv4，异步 UDP A 查询；不支持 IPv6、DNS-over-TCP、HTTP 重定向、环境代理、响应压缩或连接池。DNS/socket/TLS 均由单次请求持有，结束清理；不使用 Skynet 原有不可取消的同步域名解析路径。
+
+DNS 默认读取 `/etc/resolv.conf`；可用进程环境变量 `SKYNET_LLM_DNS_SERVER=IPv4[:port]` 显式指定解析器，缺省端口 53，非法值返回 DNS 错误。Windows 测试 BAT 从系统网卡发现 IPv4 DNS 并设置此变量，也允许 `llm-settings.bat` 手动覆盖。Windows 测试使用包内 CA 和 `SSL_CERT_FILE`，不自动读取 Windows 证书库。双击 `test-llm-offline.bat` 可先验证原生 TLS 加载、CA 和协议解析；真实模型测试使用 `test-llm.bat`，报告不会把供应商不兼容算作通过。
 
 默认最多两次尝试，重试尚未发出请求的连接失败、429、502/503/504，遵循 Retry-After 和总期限。发送后断线/超时不默认重发，错误会标记 may_have_executed。只有业务明确允许 `retry.allow_ambiguous=true` 才考虑这种重试；request_id 不等于供应商的幂等保证。
 

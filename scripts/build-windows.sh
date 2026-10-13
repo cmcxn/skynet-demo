@@ -26,3 +26,4 @@ mv -- "$STAGE/skynet-windows-x64" "$ROOT/dist/"
 mv -f -- "$STAGE/skynet-windows-x64.zip" "$ROOT/dist/"
 echo 'Ready: dist/skynet-windows-x64.zip'
 echo 'Extract the entire folder on Windows x64 and double-click start.bat.'
+echo 'For LLM checks: test-llm-offline.bat, then configure llm-settings.bat and run test-llm.bat.'

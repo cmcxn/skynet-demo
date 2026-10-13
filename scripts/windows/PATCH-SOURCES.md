@@ -25,3 +25,6 @@ git -C vendor/skynet apply --check ../../scripts/windows/skynet-mingw.patch
 ```
 
 这条命令只检查，不修改源码。补丁中保留了兼容代码及 wepoll 的原始许可证；便携包的 `licenses/` 目录同时包含此说明与实际使用的补丁。
+
+
+Windows LLM 构建另行应用本项目 `skynet-mingw-udp.patch`，通过 `WSARecvFrom` 包装转换 Winsock 错误码，避免 UDP 无数据时未设置 `EAGAIN`。离线测试执行 `test-udp-errno.c` 回归；LLM 读取流控补丁也应用到 Windows 编译副本。

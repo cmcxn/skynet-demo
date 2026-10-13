@@ -24,3 +24,4 @@
 components/skynet-llm/luaclib/
 
 .local/
+**/llm-settings.bat

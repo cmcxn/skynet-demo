@@ -11,12 +11,35 @@ COMMON=(-O2 -shared -static-libgcc -I3rd/lua -L3rd/lua)
     /src/lua-cjson/lua_cjson.c /src/lua-cjson/strbuf.c /src/lua-cjson/fpconv.c \
     -o /src/lua-cjson/cjson.so -llua54 -Wl,-Bstatic -lpthread -Wl,-Bdynamic -lm
 mkdir -p /out/tests/client /out/licenses
+"$CC" -O2 -static-libgcc -I3rd/compat-mingw /src/windows/test-udp-errno.c \
+    3rd/compat-mingw/libcompat.a -static -lpthread -lws2_32 -o /out/tests/udp-errno.exe
+"$CC" "${COMMON[@]}" -std=c11 -Wall -Wextra -Werror -I/opt/openssl/include \
+    /src/skynet-llm/lualib-src/skynet_llm_tls.c -o /tmp/skynet_llm_tls.so -llua54 \
+    /opt/openssl/lib64/libssl.a /opt/openssl/lib64/libcrypto.a \
+    -lws2_32 -lcrypt32 -lbcrypt
 "$CC" "${COMMON[@]}" -Iskynet-src -I3rd/compat-mingw -include 3rd/compat-mingw/compat.h \
     -Wno-int-conversion -Wno-incompatible-pointer-types \
     tests/client-socket.c -o /out/tests/client/socket.so \
     3rd/compat-mingw/libcompat.a -llua54 -static -lpthread -lws2_32
 cp skynet.exe skynet.dll lua54.dll 3rd/lua/lua.exe 3rd/lua/luac.exe /out/
 cp -r cservice luaclib lualib service examples /out/
+cp /tmp/skynet_llm_tls.so /out/luaclib/
+cp -r /src/skynet-llm/lualib/. /out/lualib/
+cp -r /src/skynet-llm/service/. /out/service/
+mkdir -p /out/certs /out/tests/llm-unit /out/licenses/skynet-llm
+cp /etc/ssl/certs/ca-certificates.crt /out/certs/ca-bundle.crt
+for unit in protocol sse; do
+    sed 's@components/skynet-llm/lualib/@lualib/@g' \
+        "/src/skynet-llm/tests/unit/$unit.lua" > "/out/tests/llm-unit/$unit.lua"
+done
+cp /src/windows/llm-smoke.lua /src/windows/config-llm /src/windows/detect-dns.ps1 /out/tests/
+# Reuse the same provider checks; only paths and process shutdown differ.
+sed -e 's@/results/real.json@llm-real-result.json@g' \
+    -e 's@/tmp/skynet-llm-result@llm-test-result.txt@g' \
+    -e 's@require("skynet.core").command("ABORT")@os.exit(passed and 0 or 1)@' \
+    /src/skynet-llm/tests/integration/real.lua > /out/tests/llm-check.lua
+cp /src/skynet-llm/LICENSE /src/skynet-llm/README.md /out/licenses/skynet-llm/
+cp /src/skynet-llm/patches/skynet-1.8-socket-flow-control.patch /out/licenses/skynet-llm/
 cp /src/windows/main.lua /out/examples/main.lua
 cp /src/lua-cjson/cjson.so /out/luaclib/
 cp -r /src/lua-cjson/lua/cjson /out/lualib/
@@ -34,6 +57,7 @@ cat 3rd/lua/README 3rd/lua/lua.h > /out/licenses/lua.txt
 cp /src/lua-cjson/LICENSE /out/licenses/lua-cjson.txt
 cp /src/openssl/LICENSE.txt /out/licenses/openssl.txt
 cp /src/windows/skynet-mingw.patch /out/licenses/skynet-mingw.patch
+cp /src/windows/skynet-mingw-udp.patch /out/licenses/skynet-mingw-udp.patch
 cp /src/windows/PATCH-SOURCES.md /out/licenses/
 cp /usr/share/doc/gcc-mingw-w64-base/copyright /out/licenses/gcc-mingw-w64.txt
 cp /usr/share/doc/mingw-w64-common/copyright /out/licenses/mingw-w64.txt

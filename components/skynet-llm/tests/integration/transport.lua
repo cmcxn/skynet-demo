@@ -31,6 +31,37 @@ skynet.start(function()
         for k,v in pairs(overrides or {}) do t[k] = v end
         return t
     end
+    check('environment DNS override resolves without a platform resolver file and rejects invalid values', function()
+        local sock = require 'skynet.socket'
+        local address = assert(require('skynet.dns').resolve(host))
+        local octets = {}; for value in address:gmatch('%d+') do octets[#octets + 1] = tonumber(value) end
+        local resolver
+        resolver = sock.udp(function(query, from)
+            local tid = string.unpack('>I2', query)
+            local answer = string.pack('>I2I2I2I2I2I2', tid, 0x8180, 1, 1, 0, 0)
+                .. query:sub(13) .. string.pack('>I2I2I2I4I2', 0xc00c, 1, 1, 60, 4)
+                .. string.char(table.unpack(octets))
+            sock.sendto(resolver, from, answer)
+        end, '127.0.0.1', 18856)
+        local previous_getenv, configured = os.getenv, '127.0.0.1:18856'
+        os.getenv = function(name)
+            if name == 'SKYNET_LLM_DNS_SERVER' then return configured end
+            return previous_getenv(name)
+        end
+        local ok, failure = pcall(function()
+            local p = profile(false, 'windows-dns.skynet-llm.test')
+            local result, err = http.request(p, '/transport/json', '{}', options())
+            assert(result and result.status == 200, err and err.message)
+            for _, invalid in ipairs({'bad', '256.0.0.1', '127.0.0.1:0', '127.0.0.1:65536'}) do
+                configured = invalid
+                result, err = http.request(p, '/transport/json', '{}', options())
+                assert(not result and err.stage == 'dns' and err.message == 'invalid DNS resolver override')
+            end
+        end)
+        os.getenv = previous_getenv
+        sock.close(resolver)
+        assert(ok, failure)
+    end)
     check('missing native receive credit fails closed before opening a socket', function()
         local driver = require 'skynet.socketdriver'
         for _, target in ipairs({{driver, 'connect_read_limit'}, {driver, 'start_read_limit'}, {require 'skynet.socket', 'start_read_limit'}}) do
@@ -222,8 +253,8 @@ skynet.start(function()
         local previous_push, peak_buffer = driver.push, 0
         local previous_start_limit, cpu_delayed = driver.start_read_limit, false
         if previous_start_limit then
-            driver.start_read_limit = function(id, limit)
-                previous_start_limit(id, limit)
+            driver.start_read_limit = function(id, limit, register_only)
+                previous_start_limit(id, limit, register_only)
                 if id == fd and events and events >= 4096 and not cpu_delayed then
                     -- Delay this service after granting a read while its peer
                     -- has a large queued write. Lua cannot send a pause until

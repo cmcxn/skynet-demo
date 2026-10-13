@@ -89,6 +89,15 @@ local function hosts_lookup(host)
 end
 local function resolver_address(options)
     if options.dns_server then return options.dns_server.address, options.dns_server.port or 53 end
+    local configured = os.getenv('SKYNET_LLM_DNS_SERVER')
+    if configured and configured ~= '' then
+        local address, port = configured:match('^([%d%.]+):(%d+)$')
+        address, port = address or configured, tonumber(port or 53)
+        if not ipv4(address) or port < 1 or port > 65535 then
+            return nil, nil, 'invalid DNS resolver override'
+        end
+        return address, port
+    end
     local f = io.open('/etc/resolv.conf')
     if not f then return nil end
     local found
@@ -169,8 +178,8 @@ local function resolve(host, guard)
     if ipv4(host) then return host end
     local local_ip = hosts_lookup(host)
     if local_ip then return local_ip end
-    local server, port = resolver_address(guard.options)
-    if not server or not ipv4(server) then return nil, problem('network_error', 'dns', 'no IPv4 DNS resolver configured', false) end
+    local server, port, resolver_err = resolver_address(guard.options)
+    if not server or not ipv4(server) then return nil, problem('network_error', 'dns', resolver_err or 'no IPv4 DNS resolver configured', false) end
     local octets = {}; for value in server:gmatch('%d+') do octets[#octets + 1] = tonumber(value) end
     server = table.concat(octets, '.')
     local labels = {}

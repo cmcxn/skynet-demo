@@ -12,11 +12,16 @@ RUN curl -fL --retry 3 https://github.com/openssl/openssl/releases/download/open
 WORKDIR /src/skynet
 COPY vendor/skynet/ ./
 COPY scripts/windows/skynet-mingw.patch /src/windows/skynet-mingw.patch
+COPY scripts/windows/skynet-mingw-udp.patch /src/windows/skynet-mingw-udp.patch
+COPY components/skynet-llm/patches/skynet-1.8-socket-flow-control.patch /src/windows/skynet-socket-flow-control.patch
 # Discard host build products, then cache the core build separately from packaging.
 RUN find . -type f \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dll' -o -name '*.exe' \) -delete && \
     patch --batch --forward -p1 < /src/windows/skynet-mingw.patch && \
+    patch --batch --forward -p1 < /src/windows/skynet-mingw-udp.patch && \
+    patch --batch --forward -p1 < /src/windows/skynet-socket-flow-control.patch && \
     make -f mingw.mk all -j4
 COPY vendor/lua-cjson/ /src/lua-cjson/
+COPY components/skynet-llm/ /src/skynet-llm/
 COPY scripts/windows/ /src/windows/
 COPY tests/client-socket.c tests/demo-client.lua tests/https-check.lua ./tests/
 RUN bash /src/windows/compile.sh

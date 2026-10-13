@@ -1,0 +1,8 @@
+include "..\\examples\\config.path"
+thread = 4
+harbor = 0
+bootstrap = "snlua bootstrap"
+start = "llm-check"
+luaservice = "./tests/?.lua;" .. luaservice
+cpath = root .. "cservice/?.so"
+enablessl = true

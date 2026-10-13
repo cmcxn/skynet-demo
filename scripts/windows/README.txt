@@ -1,4 +1,4 @@
-Skynet v1.8.0 - portable Windows x64 demo
+Skynet v1.8.0 + skynet-llm - portable Windows x64 test package
 
 Extract the ENTIRE folder before running. Keep all DLLs and subfolders.
 No Docker, MinGW, Lua or OpenSSL installation is needed on the destination PC.
@@ -16,13 +16,49 @@ The example database is in memory; restarting loses the data.
 
 Includes Lua 5.4, lua-cjson and statically linked OpenSSL 3.5.9 for HTTPS.
 Native .so files are Windows DLLs, retaining Skynet's standard module filenames.
-The upstream v1.8.0 TLS client does not verify server certificates/hostnames.
+The upstream ltls client does not verify server certificates/hostnames.
+The separate skynet_llm_tls module DOES verify both, using the bundled CA file.
 This package keeps the upstream example's network binding configuration.
 
-Windows compatibility code is backported from cloudwu/skynet commits:
-234e134967da2f1295fc671910e47439cd47f3b1 (MinGW support)
-4b7addb (sys/select.h compatibility header).
-The backport omits newer mem_info.c and unrelated Makefile/platform changes.
-It also fixes the compatibility sleep() wrapper to accept seconds.
+Windows compatibility code and mingw.mk are backported from official Skynet.
+See PATCH-SOURCES.md for upstream provenance and local adaptations.
 The Windows demo omits the POSIX stdin console; use client.bat instead.
 Licenses, the compatibility patch and PATCH-SOURCES.md are in licenses/.
+
+LLM TESTS (Windows 10/11 x64)
+
+1. Copy llm-settings.example.bat to llm-settings.bat.
+2. Edit llm-settings.bat and fill in your own LLM_API_KEY, endpoints and models.
+   The archive contains NO real API key. Keep your edited settings file private.
+3. Double-click test-llm.bat. start.bat is not required.
+
+The test first loads the Windows TLS module and bundled CA certificates, checks
+UDP would-block error translation, then runs 31 protocol and 6 SSE checks.
+Run "test-llm.bat offline" in cmd.exe to stop
+there without sending model requests. Normal live mode sends billable requests
+for Chat, Chat streaming, function tools, tool continuation, Embeddings,
+Responses and Responses tools/streaming.
+
+DNS is detected from an IPv4 default-route adapter using Windows PowerShell.
+If discovery fails or you use a VPN/private DNS, set SKYNET_LLM_DNS_SERVER in
+llm-settings.bat to the IPv4 DNS address shown by "ipconfig /all" (optional :port).
+The LLM transport uses cancellable IPv4 UDP DNS; it does not use Windows DoH,
+IPv6-only DNS, a system HTTP proxy, or the Windows certificate store.
+test-llm.bat sets SSL_CERT_FILE to certs/ca-bundle.crt for this process only.
+Refresh that PEM bundle if your trust roots change; add your private CA there
+when needed. Do not disable certificate or hostname verification.
+
+Live results: llm-real-result.json, llm-test.log and llm-test-result.txt.
+Return code 0 means all requested checks passed; 1 means a failure or provider
+incompatibility; 2 means the key is missing and live checks were skipped.
+The default gateway passed 8 live checks in Linux Docker. Its Responses stream
+omits required output/content indexes, and reasoning lacks replayable encrypted
+content: those two checks are INCOMPATIBLE and intentionally return a nonzero
+exit code. They must not be counted as a successful Windows runtime test.
+
+The archive was cross-compiled and inspected as Windows x64 PE binaries.
+Windows runtime execution is to be verified on your destination PC.
+It includes the unofficial one-shot receive-credit patch (128 KiB per
+grant) and a Windows UDP error-code fix. These patches apply only to build
+copies; originals and licenses
+are in licenses/. Future Skynet upgrades require reviewing both patches.

@@ -94,3 +94,6 @@ Skynet v1.8.0 的原生 TLS 客户端没有启用服务端证书验证；安装 
 `components/skynet-llm` 提供 Chat Completions、Responses、Embeddings 和 SSE，工具执行留在业务层。Docker 构建会安装 Lua 模块、管理/worker 服务和独立的 OpenSSL TLS 扩展；该扩展启用证书链及主机名校验。
 
 使用方法见 [组件 README](components/skynet-llm/README.md)。运行 `./scripts/test-llm.sh mock` 验证本地协议、调度和 TLS 故障场景；`./scripts/test-llm.sh real` 使用 `.local/mao-models.env` 测试真实模型。`.local/` 已被 Git 与 Docker 构建排除。
+
+
+便携包同时包含 `skynet-llm` 服务、经过验证的独立 TLS 模块、CA 证书和按需读取补丁。先双击 `test-llm-offline.bat` 检查 DLL、CA、31 项协议和 6 项 SSE 测试；再把 `llm-settings.example.bat` 复制为 `llm-settings.bat`，填写自己的模型密钥，双击 `test-llm.bat` 进行真实调用。无需先启动 `start.bat`。模型结果保存在包内 `llm-real-result.json` 和 `llm-test.log`；包内没有真实密钥。Windows DNS 默认从系统网卡发现，可在私有配置中指定 `SKYNET_LLM_DNS_SERVER`（IPv4，可带端口）。新 TLS 模块使用包内 PEM 信任库，保留证书和主机名校验。编译和 PE/DLL 依赖检查在 Docker 中完成，Windows 实机运行仍需测试。

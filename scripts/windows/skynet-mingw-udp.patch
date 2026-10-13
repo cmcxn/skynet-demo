@@ -1,0 +1,34 @@
+diff --git a/3rd/compat-mingw/unistd.c b/3rd/compat-mingw/unistd.c
+--- a/3rd/compat-mingw/unistd.c
++++ b/3rd/compat-mingw/unistd.c
+@@ -379,3 +379,14 @@
+     }
+     /* NOTREACHED */
+ }
++
++int compat_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen) {
++    WSABUF buffer = { .len = (ULONG)len, .buf = buf };
++    DWORD received = 0;
++    DWORD receive_flags = (DWORD)flags;
++    if (WSARecvFrom(s, &buffer, 1, &received, &receive_flags, from, fromlen, NULL, NULL) == SOCKET_ERROR) {
++        set_errno_from_wsa_error(WSAGetLastError());
++        return -1;
++    }
++    return (int)received;
++}
+diff --git a/3rd/compat-mingw/unistd.h b/3rd/compat-mingw/unistd.h
+--- a/3rd/compat-mingw/unistd.h
++++ b/3rd/compat-mingw/unistd.h
+@@ -106,9 +106,12 @@
+ int read(int fd, void* buffer, unsigned int sz);
+ // Wrapper function for recv with better error handling
+ int compat_recv(SOCKET s, char *buf, int len, int flags);
++// recvfrom must translate Winsock errors too, including WSAEWOULDBLOCK.
++int compat_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen);
+ 
+ // Macro to redirect recv calls to our wrapper
+ #define recv compat_recv
++#define recvfrom compat_recvfrom
+ int close(int fd);
+ 
+ #define getpid _getpid
