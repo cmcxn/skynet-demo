@@ -39,7 +39,7 @@ sed -e 's@/results/real.json@llm-real-result.json@g' \
     -e 's@require("skynet.core").command("ABORT")@os.exit(passed and 0 or 1)@' \
     /src/skynet-llm/tests/integration/real.lua > /out/tests/llm-check.lua
 cp /src/skynet-llm/LICENSE /src/skynet-llm/README.md /out/licenses/skynet-llm/
-cp /src/skynet-llm/patches/skynet-1.8-socket-flow-control.patch /out/licenses/skynet-llm/
+cp /src/skynet-llm/patches/skynet-socket-flow-control.patch /out/licenses/skynet-llm/
 cp /src/windows/main.lua /out/examples/main.lua
 cp /src/lua-cjson/cjson.so /out/luaclib/
 cp -r /src/lua-cjson/lua/cjson /out/lualib/
@@ -56,7 +56,6 @@ cp LICENSE /out/licenses/skynet.txt
 cat 3rd/lua/README 3rd/lua/lua.h > /out/licenses/lua.txt
 cp /src/lua-cjson/LICENSE /out/licenses/lua-cjson.txt
 cp /src/openssl/LICENSE.txt /out/licenses/openssl.txt
-cp /src/windows/skynet-mingw.patch /out/licenses/skynet-mingw.patch
 cp /src/windows/skynet-mingw-udp.patch /out/licenses/skynet-mingw-udp.patch
 cp /src/windows/PATCH-SOURCES.md /out/licenses/
 cp /usr/share/doc/gcc-mingw-w64-base/copyright /out/licenses/gcc-mingw-w64.txt

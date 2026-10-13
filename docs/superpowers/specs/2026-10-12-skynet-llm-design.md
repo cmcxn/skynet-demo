@@ -8,7 +8,7 @@
 
 组件负责协议、HTTP/TLS、并发预算、排队、超时、取消、有限重试、响应校验和可观测性。业务负责提示词、会话历史、工具权限与执行、工具循环次数、数据库、记忆与检索。模型返回工具调用时，组件把调用交给业务；业务执行后可以用辅助函数生成下一次请求。
 
-交付形式是独立的 Skynet 库加内部服务，名称为 `skynet-llm`，通过 `require "skynet_llm"` 使用。它不是 Codex 插件，也不是绑定 `mao` 的业务服务。首版只承诺 Skynet + Lua 5.4，在当前 Linux Docker 环境验收。普通 Lua、自动 Agent 循环、实时音视频、文件上传、Batch API、跨节点统一限流不在首版范围内。
+交付形式是独立的 Skynet 库加内部服务，名称为 `skynet-llm`，通过 `require "skynet_llm"` 使用。它不是 Codex 插件，也不是绑定 `mao` 的业务服务。当前支持 Skynet master `64391f7` + Lua 5.5.1（初版为 v1.8.0 + Lua 5.4），在当前 Linux Docker 环境验收。普通 Lua、自动 Agent 循环、实时音视频、文件上传、Batch API、跨节点统一限流不在首版范围内。
 
 Windows 构建保留现有功能；新组件的 Windows 支持需另外编译及运行验证，不根据已有 Skynet Windows 包推定兼容。首版也不提供 Responses 后台任务的查询、删除、取消接口；服务端内置工具只做协议透传，是否启用由业务和供应商能力决定。
 
@@ -28,7 +28,7 @@ Windows 构建保留现有功能；新组件的 Windows 支持需另外编译及
 | SQL 表结构、完整提示词和响应的保存策略 | `mao` 审计接收服务 |
 | 工具白名单、参数校验、执行、结果和循环 | `mao` 或其他使用方 |
 
-当前固定 Skynet v1.8.0 的 `ltls` 客户端没有证书链和主机名校验；`httpc.request_stream` 在响应头后停用了原超时。已有 HTTPS 演示不能作为组件可靠性或证书校验的验收依据。
+初版调研时，Skynet v1.8.0 的 `ltls` 客户端没有证书链和主机名校验；`httpc.request_stream` 在响应头后停用了原超时。已有 HTTPS 演示不能作为组件可靠性或证书校验的验收依据。
 
 ## 3. 目录与接入方式
 
@@ -59,7 +59,7 @@ components/skynet-llm/
   lualib-src/
     skynet_llm_tls.c               # 独立 TLS 客户端扩展
   patches/
-    skynet-1.8-socket-flow-control.patch # 固定版本的按需读取扩展
+    skynet-socket-flow-control.patch # 固定版本的按需读取扩展
   service/
     skynet_llm.lua                 # 单节点管理服务
     skynet_llm_worker.lua          # 每次尝试私有 worker，清理后退出
@@ -339,9 +339,9 @@ DNS 通过独立适配器先解析成数字 IP，再交给连接层。实现采�
 
 压力测试发现固定 Skynet v1.8.0 的 Lua pause 只能在 DATA 消息被处理后发出；socket 线程可能在此之前积压大量数据。连续 SOCKET_MORE/UDP 读取还会延后处理控制管道，旧读事件也未检查暂停状态。只增加 Lua 缓冲上限或限制普通单批读取大小都不能保证严格背压。
 
-Docker 在 `/src/skynet` 编译副本上应用 `patches/skynet-1.8-socket-flow-control.patch`。补丁为模型连接提供显式启用的原生单次读取许可：`socketdriver.connect_read_limit(host,port,B)` 创建的连接在原生层即为暂停读取状态，`socket.start_read_limit(fd,B)` 注册对应 Lua socket。注册时内部调用 `socketdriver.start_read_limit(fd,B,true)`，只重放 OPEN 通知而不允许读取，避免早期通知已发生时丢失连接注册；即使内部 on_fd 回调让出协程也能完成注册。随后每次不带注册标志的读取许可只产生一批不超过 128 KiB 的 DATA，短读也消耗本次许可，socket 线程在投递消息前暂停。Lua adapter 只在上一批数据已消费且 read-any 缓冲为空时发出下一次许可，读取许可不积累。该模式只支持 read-any，显式拒绝定长 read、readline、readall 等不适配操作。普通 socket 沿用原有读取模式，不施加全局 64 KiB 限制。补丁同时及时检查控制命令并跳过已暂停 socket 的旧读事件。
+Docker 在 `/src/skynet` 编译副本上应用 `patches/skynet-socket-flow-control.patch`。补丁为模型连接提供显式启用的原生单次读取许可：`socketdriver.connect_read_limit(host,port,B)` 创建的连接在原生层即为暂停读取状态，`socket.start_read_limit(fd,B)` 注册对应 Lua socket。注册时内部调用 `socketdriver.start_read_limit(fd,B,true)`，只重放 OPEN 通知而不允许读取，避免早期通知已发生时丢失连接注册；即使内部 on_fd 回调让出协程也能完成注册。随后每次不带注册标志的读取许可只产生一批不超过 128 KiB 的 DATA，短读也消耗本次许可，socket 线程在投递消息前暂停。Lua adapter 只在上一批数据已消费且 read-any 缓冲为空时发出下一次许可，读取许可不积累。该模式只支持 read-any，显式拒绝定长 read、readline、readall 等不适配操作。普通 socket 沿用原有读取模式，不施加全局 64 KiB 限制。补丁同时及时检查控制命令并跳过已暂停 socket 的旧读事件。
 
-补丁由本次开发编写，针对固定 v1.8.0 提交 `ba64be6f9fa044933c77de1317f466afbade8eaa`，不是上游发布或网上下载的现成修复。它涉及 `socket_server.c/.h`、`skynet_socket.c/.h`、`lua-socket.c` 和 `socket.lua` 六个文件。Git 子模块检出及固定提交保持原样，依赖补丁和许可随镜像保存。其他项目接入需要配套原生接口与 Lua adapter；接口缺失返回 `unsupported_capability`，不能静默退回无界模式。升级 Skynet 时必须重新审阅、移植并测试该非官方扩展。最终补丁已通过延迟 Lua 消费、近 32 MiB 流、多次暂停恢复、取消及普通 socket 回归的独立验证，压力测试观测到 DATA 批次不超过 131072 字节。
+补丁由本次开发编写，针对固定 v1.8.0 提交 `ba64be6f9fa044933c77de1317f466afbade8eaa`，不是上游发布或网上下载的现成修复。它涉及 `socket_server.c/.h`、`skynet_socket.c/.h`、`lua-socket.c` 和 `socket.lua` 六个文件。当前补丁已移植到 master 提交 `64391f732e76507ea6615f312cb71be1fd7bfbdd`，保留上游 `request_init()` 初始化；Git 子模块仅升级固定提交，源码保持干净，依赖补丁和许可随镜像保存。其他项目接入需要配套原生接口与 Lua adapter；接口缺失返回 `unsupported_capability`，不能静默退回无界模式。升级 Skynet 时必须重新审阅、移植并测试该非官方扩展。最终补丁已通过延迟 Lua 消费、近 32 MiB 流、多次暂停恢复、取消及普通 socket 回归的独立验证，压力测试观测到 DATA 批次不超过 131072 字节。
 
 TLS 使用组件独立的 `skynet_llm_tls` C 扩展，采用 OpenSSL 3 客户端 API，独立模块名、metatable、context 和 userdata 生命周期。可参考 MIT 许可的 ltls memory BIO 适配方式，保留来源说明；不修改固定的 Skynet 子模块，不依赖原 ltls 的全局初始化开关，也不调用影响同进程其他模块的 OpenSSL 全局 cleanup。
 
@@ -387,7 +387,7 @@ TLS 使用组件独立的 `skynet_llm_tls` C 扩展，采用 OpenSSL 3 客户端
 
 本设计选择独立组件、三个原生 API 和共享可靠传输。继续扩展 mao 内部网关更快，但会继续绑定游戏逻辑；把所有模型压成一个 `generate()` 会丢失 Responses 项目和工具续接语义；直接采用当前 httpc 省代码，但无法满足已确认的流式超时、内存上限和证书校验要求。
 
-本地代码依据：Skynet 固定于 v1.8.0（`ba64be6f9fa044933c77de1317f466afbade8eaa`）；主要对照 `vendor/skynet/lualib/http/httpc.lua`、`http/internal.lua`、`http/tlshelper.lua`、`vendor/skynet/lualib-src/ltls.c`，以及第 2 节列出的 mao 模块。
+初版调研代码依据：Skynet 固定于 v1.8.0（`ba64be6f9fa044933c77de1317f466afbade8eaa`）；主要对照 `vendor/skynet/lualib/http/httpc.lua`、`http/internal.lua`、`http/tlshelper.lua`、`vendor/skynet/lualib-src/ltls.c`，以及第 2 节列出的 mao 模块。
 
 以下官方文档于设计阶段核对；供应商和模型能力仍以具体部署为准，组件通过原生字段和能力配置保持扩展空间：
 

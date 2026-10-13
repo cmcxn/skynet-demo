@@ -10,12 +10,12 @@ RUN make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/us
     cp -r cservice luaclib lualib service examples /out/ && \
     cp 3rd/lua/lua /out/3rd/lua/ && \
     printf '\nenablessl = true\n' >> /out/examples/config
-COPY components/skynet-llm/patches/skynet-1.8-socket-flow-control.patch /tmp/skynet-socket-flow-control.patch
+COPY components/skynet-llm/patches/skynet-socket-flow-control.patch /tmp/skynet-socket-flow-control.patch
 RUN patch -p1 < /tmp/skynet-socket-flow-control.patch && \
     make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/usr/include && \
     cp skynet /out/ && cp -r luaclib/. /out/luaclib/ && cp -r lualib/. /out/lualib/
 COPY vendor/lua-cjson/ /src/lua-cjson/
-RUN make -C /src/lua-cjson LUA_VERSION=5.4 LUA_INCLUDE_DIR=/src/skynet/3rd/lua CJSON_CFLAGS="-fpic -pthread -DMULTIPLE_THREADS" CJSON_LDFLAGS="-shared -pthread -lm" && \
+RUN make -C /src/lua-cjson LUA_VERSION=5.5 LUA_INCLUDE_DIR=/src/skynet/3rd/lua CJSON_CFLAGS="-fpic -pthread -DMULTIPLE_THREADS" CJSON_LDFLAGS="-shared -pthread -lm" && \
     cp /src/lua-cjson/cjson.so /out/luaclib/ && \
     cp -r /src/lua-cjson/lua/cjson /out/lualib/
 COPY components/skynet-llm/ /src/skynet-llm/
@@ -33,7 +33,8 @@ RUN mkdir -p /out/tests/client && \
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends libssl3t64 ca-certificates && rm -rf /var/lib/apt/lists/*
 LABEL org.opencontainers.image.source="https://github.com/cloudwu/skynet" \
-      org.opencontainers.image.version="1.8.0"
+      org.opencontainers.image.version="master-64391f7" \
+      org.opencontainers.image.revision="64391f732e76507ea6615f312cb71be1fd7bfbdd"
 WORKDIR /skynet
 COPY --from=build --chown=1000:1000 /out/ ./
 COPY --chown=1000:1000 tests/ ./tests/

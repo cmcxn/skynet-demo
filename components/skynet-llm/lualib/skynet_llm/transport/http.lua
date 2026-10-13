@@ -144,9 +144,9 @@ local function dns_answer(bytes, tid, expected_name)
     assert(flags & 0x000f == 0, 'DNS name has no answer')
     local addresses, aliases = {}, {}
     for _ = 1, answers do
-        local owner, size
+        local owner, size, ttl
         owner, pos = dns_name(bytes, pos)
-        kind, class, _, size, pos = string.unpack('>I2I2I4I2', bytes, pos)
+        kind, class, ttl, size, pos = string.unpack('>I2I2I4I2', bytes, pos)
         assert(pos + size - 1 <= #bytes, 'truncated DNS record')
         if kind == 1 and class == 1 and size == 4 then
             local a,b,c,d = bytes:byte(pos, pos + 3)

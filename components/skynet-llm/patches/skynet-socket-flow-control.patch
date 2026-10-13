@@ -1,7 +1,7 @@
 diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
 --- a/skynet-src/socket_server.c
 +++ b/skynet-src/socket_server.c
-@@ -98,6 +98,7 @@
+@@ -99,6 +99,7 @@
  	ATOM_INT type;
  	uint8_t protocol;
  	bool reading;
@@ -9,7 +9,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	bool writing;
  	bool closing;
  	ATOM_INT udpconnecting;
-@@ -133,6 +134,7 @@
+@@ -134,6 +135,7 @@
  struct request_open {
  	int id;
  	int port;
@@ -17,7 +17,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	uintptr_t opaque;
  	char host[1];
  };
-@@ -174,6 +176,8 @@
+@@ -175,6 +177,8 @@
  
  struct request_resumepause {
  	int id;
@@ -26,7 +26,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	uintptr_t opaque;
  };
  
-@@ -578,6 +582,7 @@
+@@ -579,6 +583,7 @@
  	s->id = id;
  	s->fd = fd;
  	s->reading = true;
@@ -34,7 +34,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	s->writing = false;
  	s->closing = false;
  	ATOM_INIT(&s->sending , ID_TAG16(id) << 16 | 0);
-@@ -657,12 +662,13 @@
+@@ -658,12 +663,13 @@
  		goto _failed;
  	}
  
@@ -49,7 +49,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	if(status == 0) {
  		ATOM_STORE(&ns->type , SOCKET_TYPE_CONNECTED);
  		struct sockaddr * addr = ai_ptr->ai_addr;
-@@ -1224,7 +1230,10 @@
+@@ -1225,7 +1231,10 @@
  	}
  	struct socket_lock l;
  	socket_lock_init(s, &l);
@@ -61,7 +61,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  		result->data = "enable read failed";
  		return SOCKET_ERR;
  	}
-@@ -1461,6 +1470,9 @@
+@@ -1462,6 +1471,9 @@
  static int
  forward_message_tcp(struct socket_server *ss, struct socket *s, struct socket_lock *l, struct socket_message * result) {
  	int sz = s->p.size;
@@ -71,7 +71,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	char * buffer = MALLOC(sz);
  	int n = (int)read(s->fd, buffer, sz);
  	if (n<0) {
-@@ -1503,6 +1515,12 @@
+@@ -1504,6 +1516,12 @@
  		return -1;
  	}
  
@@ -84,7 +84,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	stat_read(ss,s,n);
  
  	result->opaque = s->opaque;
-@@ -1511,8 +1529,10 @@
+@@ -1512,8 +1530,10 @@
  	result->data = buffer;
  
  	if (n == sz) {
@@ -97,8 +97,8 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	} else if (sz > MIN_READ_BUFFER && n*2 < sz) {
  		s->p.size /= 2;
  	}
-@@ -1759,12 +1779,13 @@
- 			skynet_error(NULL, "socket-server: invalid socket");
+@@ -1760,12 +1780,13 @@
+ 			skynet_error(NULL, "socket-server error: invalid socket");
  			break;
  		default:
 -			if (e->read) {
@@ -112,7 +112,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  						return SOCKET_DATA;
  					}
  				} else {
-@@ -1772,6 +1793,7 @@
+@@ -1773,6 +1794,7 @@
  					if (type == SOCKET_UDP) {
  						// try read again
  						--ss->event_index;
@@ -120,7 +120,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  						return SOCKET_UDP;
  					}
  				}
-@@ -1849,6 +1871,7 @@
+@@ -1850,6 +1872,7 @@
  	req->u.open.opaque = opaque;
  	req->u.open.id = id;
  	req->u.open.port = port;
@@ -128,9 +128,9 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	memcpy(req->u.open.host, addr, len);
  	req->u.open.host[len] = '\0';
  
-@@ -1857,10 +1880,16 @@
+@@ -1863,11 +1886,17 @@
  
- int 
+ int
  socket_server_connect(struct socket_server *ss, uintptr_t opaque, const char * addr, int port) {
 +	return socket_server_connect_read_limit(ss, opaque, addr, port, 0);
 +}
@@ -138,6 +138,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
 +int
 +socket_server_connect_read_limit(struct socket_server *ss, uintptr_t opaque, const char *addr, int port, int read_limit) {
  	struct request_package request;
+ 	request_init(&request);
  	int len = open_request(ss, &request, opaque, addr, port);
  	if (len < 0)
  		return -1;
@@ -145,7 +146,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
  	send_request(ss, &request, 'O', sizeof(request.u.open) + len);
  	return request.u.open.id;
  }
-@@ -2086,8 +2115,15 @@
+@@ -2101,9 +2130,16 @@
  
  void
  socket_server_start(struct socket_server *ss, uintptr_t opaque, int id) {
@@ -155,6 +156,7 @@ diff --git a/skynet-src/socket_server.c b/skynet-src/socket_server.c
 +void
 +socket_server_start_read_limit(struct socket_server *ss, uintptr_t opaque, int id, int read_limit, int register_only) {
  	struct request_package request;
+ 	request_init(&request);
  	request.u.resumepause.id = id;
 +	request.u.resumepause.read_limit = read_limit;
 +	request.u.resumepause.register_only = register_only;
@@ -210,7 +212,7 @@ diff --git a/skynet-src/skynet_socket.c b/skynet-src/skynet_socket.c
 diff --git a/lualib-src/lua-socket.c b/lualib-src/lua-socket.c
 --- a/lualib-src/lua-socket.c
 +++ b/lualib-src/lua-socket.c
-@@ -467,6 +467,21 @@
+@@ -482,6 +482,21 @@
  }
  
  static int
@@ -232,7 +234,7 @@ diff --git a/lualib-src/lua-socket.c b/lualib-src/lua-socket.c
  lclose(lua_State *L) {
  	int id = luaL_checkinteger(L,1);
  	struct skynet_context * ctx = lua_touserdata(L, lua_upvalueindex(1));
-@@ -616,6 +631,17 @@
+@@ -634,6 +649,17 @@
  	struct skynet_context * ctx = lua_touserdata(L, lua_upvalueindex(1));
  	int id = luaL_checkinteger(L, 1);
  	skynet_socket_start(ctx,id);
@@ -250,7 +252,7 @@ diff --git a/lualib-src/lua-socket.c b/lualib-src/lua-socket.c
  	return 0;
  }
  
-@@ -876,6 +902,7 @@
+@@ -894,6 +920,7 @@
  	luaL_newlib(L,l);
  	luaL_Reg l2[] = {
  		{ "connect", lconnect },
@@ -258,7 +260,7 @@ diff --git a/lualib-src/lua-socket.c b/lualib-src/lua-socket.c
  		{ "close", lclose },
  		{ "shutdown", lshutdown },
  		{ "listen", llisten },
-@@ -883,6 +910,7 @@
+@@ -901,6 +928,7 @@
  		{ "lsend", lsendlow },
  		{ "bind", lbind },
  		{ "start", lstart },

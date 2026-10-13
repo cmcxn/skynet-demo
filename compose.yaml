@@ -1,6 +1,6 @@
 services:
   skynet:
-    image: skynet-demo:1.8.0
+    image: skynet-demo:master-64391f7
     build: .
     stdin_open: true
     tty: true

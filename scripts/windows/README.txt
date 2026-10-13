@@ -1,4 +1,4 @@
-Skynet v1.8.0 + skynet-llm - portable Windows x64 test package
+Skynet master 64391f7 + skynet-llm - portable Windows x64 test package
 
 Extract the ENTIRE folder before running. Keep all DLLs and subfolders.
 No Docker, MinGW, Lua or OpenSSL installation is needed on the destination PC.
@@ -14,14 +14,17 @@ Stop the server with Ctrl+C in the server window.
 Use a separate copy for each instance. Ports 8888, 8000, 2013 and 2526 must be free.
 The example database is in memory; restarting loses the data.
 
-Includes Lua 5.4, lua-cjson and statically linked OpenSSL 3.5.9 for HTTPS.
+Includes Lua 5.5.1, lua-cjson and statically linked OpenSSL 3.5.9 for HTTPS.
+lua54.dll is the upstream build's legacy filename; its contents are Lua 5.5.1.
+All native modules are rebuilt together. Do not mix DLLs with an older package.
 Native .so files are Windows DLLs, retaining Skynet's standard module filenames.
 The upstream ltls client does not verify server certificates/hostnames.
 The separate skynet_llm_tls module DOES verify both, using the bundled CA file.
 This package keeps the upstream example's network binding configuration.
 
-Windows compatibility code and mingw.mk are backported from official Skynet.
-See PATCH-SOURCES.md for upstream provenance and local adaptations.
+Windows compatibility code and mingw.mk come directly from cloudwu/skynet
+master commit 64391f732e76507ea6615f312cb71be1fd7bfbdd.
+The old MinGW backport patch is removed. Upstream already fixes sleep() units.
 The Windows demo omits the POSIX stdin console; use client.bat instead.
 Licenses, the compatibility patch and PATCH-SOURCES.md are in licenses/.
 
@@ -69,3 +72,7 @@ Near-32-MiB streaming and cancellation stayed within the 128-KiB receive bound.
 Live Wine model checks returned 8 PASS and the same 2 provider incompatibilities
 listed above. Wine used an explicit DNS override; the Windows PowerShell DNS
 discovery script still needs validation on a Windows PC.
+
+本次 master 迁移验收：64391f732e76507ea6615f312cb71be1fd7bfbdd，Lua 5.5.1。
+Linux 全套 mock 测试通过；Wine 离线 31 协议 + 6 SSE、36 传输、客户端及生命周期通过。
+真实模型 8 项通过；Responses SSE 缺少索引、reasoning 无法重放两项服务兼容性限制仍存在。

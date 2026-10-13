@@ -1,12 +1,12 @@
 # skynet-llm
 
-Skynet + Lua 5.4 模型调用组件，支持原生 Chat Completions、Responses、Embeddings 和 Chat/Responses SSE。业务负责工具执行、提示词和会话历史；组件负责模型协议、预算队列、超时、取消、有限重试及 HTTPS 证书校验。
+Skynet + Lua 5.5.1 模型调用组件，支持原生 Chat Completions、Responses、Embeddings 和 Chat/Responses SSE。业务负责工具执行、提示词和会话历史；组件负责模型协议、预算队列、超时、取消、有限重试及 HTTPS 证书校验。初版使用 Lua 5.4，当前随 Skynet 子模块升级并重新编译全部原生模块。
 
 首版在 Linux Docker 中构建和验证。`skynet_llm_tls` 链接 OpenSSL 3，编译时使用运行 Skynet 的 Lua 头文件。Windows x64 便携测试包可通过仓库根目录 `scripts/build-windows.sh` 交叉编译，包含独立 TLS DLL、CA 和测试入口；Windows 实机运行与 macOS 原生构建尚未验证，动态库不能跨平台复制。Skynet Git 子模块检出无需修改。
 
-Skynet v1.8.0 中依赖 Lua 处理 DATA 后再暂停的流控，不能阻止 socket 线程提前积压数据。本仓库 Dockerfile 在编译副本上应用 `patches/skynet-1.8-socket-flow-control.patch`，为模型连接增加按需读取模式：连接建立时就暂停读取，注册 Lua socket 时重放 OPEN 通知且保持暂停；每次许可只接收一批最多 128 KiB 的数据，在投递 DATA 消息前再次暂停；Lua 消费完这批数据后才发下一次许可。普通 socket 仍使用原有读取模式，没有全局 64 KiB 读取限制。最终补丁已通过近 32 MiB 流、多次暂停恢复、延迟 Lua 消费和取消测试及独立复核。
+当前 Skynet `master` 中依赖 Lua 处理 DATA 后再暂停的流控，仍不能阻止 socket 线程提前积压数据。本仓库 Dockerfile 在编译副本上应用 `patches/skynet-socket-flow-control.patch`，为模型连接增加按需读取模式：连接建立时就暂停读取，注册 Lua socket 时重放 OPEN 通知且保持暂停；每次许可只接收一批最多 128 KiB 的数据，在投递 DATA 消息前再次暂停；Lua 消费完这批数据后才发下一次许可。普通 socket 仍使用原有读取模式，没有全局 64 KiB 读取限制。初版补丁已通过近 32 MiB 流、多次暂停恢复、延迟 Lua 消费和取消测试及独立复核。
 
-该补丁由本次开发编写，针对固定的 Skynet v1.8.0 提交 `ba64be6f9fa044933c77de1317f466afbade8eaa`，是本组件的非官方扩展；不是下载的现成开源修复，也不是 Skynet 上游发布的补丁。它改动 socket 核心、C/Lua 接口及 Lua socket 适配共六个上游文件，Git 子模块检出保持原样。接入其他项目时需使用配套镜像或移植并验证同等接口；缺少私有读取接口会返回 `unsupported_capability`，不会退回无界读取。升级 Skynet 时需重新审阅、移植和测试补丁。补丁及许可证随镜像放在 `/skynet/licenses/`。
+该补丁由本项目开发编写，最初基于 Skynet v1.8.0，现在已移植到固定的 `master` 提交 `64391f732e76507ea6615f312cb71be1fd7bfbdd`，是本组件的非官方扩展；不是下载的现成开源修复，也不是 Skynet 上游发布的补丁。它改动 socket 核心、C/Lua 接口及 Lua socket 适配共六个上游文件，并保留上游新增的请求初始化逻辑。Git 子模块内文件保持原样，补丁只作用于编译副本。接入其他项目需使用配套镜像或移植并验证同等接口；缺少私有读取接口返回 `unsupported_capability`。以后升级 Skynet 时仍需重新审阅、移植和测试补丁。补丁及许可证随镜像放在 `/skynet/licenses/`。
 
 ## 接入
 

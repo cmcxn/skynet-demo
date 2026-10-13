@@ -1,30 +1,23 @@
-# Windows 兼容补丁来源
+# Windows 兼容代码与补丁来源
 
-本项目的 `skynet-mingw.patch` 是将官方 Windows 支持回移到 Skynet v1.8.0 的组合补丁，由本次开发整理和适配。主体兼容层与 MinGW 构建规则来自上游，并非从零编写。
+当前 Skynet 子模块固定在官方 master 提交 `64391f732e76507ea6615f312cb71be1fd7bfbdd`，包含 Lua 5.5.1。`3rd/compat-mingw/` 和 `mingw.mk` 直接使用此提交中的官方实现；此前回移到 v1.8.0 的 `skynet-mingw.patch` 已移除。官方源码已包含 `mem_info.c` 和以秒为单位的 `sleep()` 实现，无需旧适配。
 
-## 上游来源
+MinGW 支持的上游来源为 [234e134](https://github.com/cloudwu/skynet/commit/234e134967da2f1295fc671910e47439cd47f3b1)，后续兼容头文件来自 [4b7addb](https://github.com/cloudwu/skynet/commit/4b7addb)。构建使用当前 master 中整套实现，不再单独摘取这些提交。
 
-- [cloudwu/skynet 234e134967da2f1295fc671910e47439cd47f3b1](https://github.com/cloudwu/skynet/commit/234e134967da2f1295fc671910e47439cd47f3b1)：hanxi 提交的 MinGW 交叉编译支持。提取了新增的 `3rd/compat-mingw/` 兼容层和 `mingw.mk`。
-- [cloudwu/skynet 4b7addb](https://github.com/cloudwu/skynet/commit/4b7addb)：补充 `3rd/compat-mingw/sys/select.h`，内容与该提交一致。
+## 仍需保留的本项目补丁
 
-## 本项目的适配
+- `scripts/windows/skynet-mingw-udp.patch`：本项目在 Wine 回归中编写。上游仅转换 TCP `recv` 的 Winsock 错误，UDP `recvfrom` 未转换。补丁增加 `WSARecvFrom` 包装，复用已有错误码映射，将 `WSAEWOULDBLOCK` 转换为 `EAGAIN`。离线测试中的 `test-udp-errno.c` 验证此行为。
+- `components/skynet-llm/patches/skynet-socket-flow-control.patch`：本项目编写的 LLM 按需读取扩展，每次读取最多 128 KiB，支持仅注册连接通知的重放。最初针对 v1.8.0，现在已移植到上述 master 提交，并保留上游 `request_init()` 初始化逻辑。这不是官方 MinGW 支持的一部分。
 
-1. 不包含上游对 `.gitignore`、`Makefile`、`platform.mk` 的修改。原来的 Linux 构建方式保持不变，Windows 构建直接调用 `make -f mingw.mk all`。
-2. 从 `mingw.mk` 的源码列表移除 `mem_info.c`，因为固定的 v1.8.0 中尚无该文件。
-3. 将兼容层 `sleep()` 的实现由 `Sleep(ms)` 改为 `Sleep(seconds * 1000)`，符合 Skynet 调用方使用秒的约定；否则监控线程会频繁产生错误的死循环提示。
-4. 清理补丁文本的行尾空白，不改变代码行为。
-
-补丁只在 Windows 构建容器中的源码副本上应用，不修改宿主机的 Skynet 子模块。DLL 依赖收集、OpenSSL / lua-cjson 编译、BAT 启动与测试脚本由本项目另外编写，不属于上游补丁。
+补丁依次应用到容器内的源码副本，宿主机子模块保持干净。DLL 依赖收集、OpenSSL / lua-cjson 编译、BAT 测试脚本由本项目另外编写。Windows 实机仍需验证；Wine 测试不等同于 Windows 实机测试。
 
 ## 核对方法
 
-下载上述两个提交的 `.patch`，可以逐项核对保留的文件和本项目的适配。也可在项目根目录验证补丁是否适用于固定源码：
+在项目根目录只检查补丁适用性：
 
 ```sh
-git -C vendor/skynet apply --check ../../scripts/windows/skynet-mingw.patch
+git -C vendor/skynet apply --check ../../scripts/windows/skynet-mingw-udp.patch
+git -C vendor/skynet apply --check ../../components/skynet-llm/patches/skynet-socket-flow-control.patch
 ```
 
-这条命令只检查，不修改源码。补丁中保留了兼容代码及 wepoll 的原始许可证；便携包的 `licenses/` 目录同时包含此说明与实际使用的补丁。
-
-
-Windows LLM 构建另行应用本项目 `skynet-mingw-udp.patch`，通过 `WSARecvFrom` 包装转换 Winsock 错误码，避免 UDP 无数据时未设置 `EAGAIN`。离线测试执行 `test-udp-errno.c` 回归；LLM 读取流控补丁也应用到 Windows 编译副本。
+便携包 `licenses/` 保存上游许可证、本说明和实际使用的补丁。后续升级 master 固定提交时，需重新审阅补丁并重跑 Linux 与 Wine 回归；`.gitmodules` 的 `branch = master` 仅指定远程更新目标，真正版本仍由父仓库的子模块提交号固定。
