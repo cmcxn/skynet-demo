@@ -24,6 +24,14 @@ mkdir -p /out/tests/client /out/licenses
 cp skynet.exe skynet.dll lua54.dll 3rd/lua/lua.exe 3rd/lua/luac.exe /out/
 cp -r cservice luaclib lualib service examples /out/
 cp /tmp/skynet_llm_tls.so /out/luaclib/
+make -C /src/skynet-aoi CXX=x86_64-w64-mingw32-g++ \
+    LUA_INC=/src/skynet/3rd/lua PLUTO_DIR=/src/pluto OUT_DIR=/out/luaclib \
+    CXXFLAGS="-O2 -static-libgcc -static-libstdc++" SHARED=-shared \
+    LDLIBS="-L/src/skynet/3rd/lua -llua54"
+cp -r /src/skynet-aoi/lualib/. /out/lualib/
+mkdir -p /out/tests/aoi /out/licenses/pluto-aoi
+cp /src/skynet-aoi/tests/unit.lua /out/tests/aoi/
+cp /src/pluto/LICENSE /src/skynet-aoi/README.md /out/licenses/pluto-aoi/
 cp -r /src/skynet-llm/lualib/. /out/lualib/
 cp -r /src/skynet-llm/service/. /out/service/
 mkdir -p /out/certs /out/tests/llm-unit /out/licenses/skynet-llm

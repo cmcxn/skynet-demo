@@ -1,7 +1,7 @@
 ARG BUILDER_IMAGE=hanxi/skynet-builder@sha256:31b04c011d8d5c28840c51adececb0a5f5ceada0f50aeb46faa205e1ce552ea9
 FROM ${BUILDER_IMAGE} AS build
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates perl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates perl g++-mingw-w64-x86-64 && rm -rf /var/lib/apt/lists/*
 # Static OpenSSL keeps the portable package independent of an installed OpenSSL.
 WORKDIR /src/openssl
 RUN curl -fL --retry 3 https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz -o /tmp/openssl.tar.gz && \
@@ -20,6 +20,9 @@ RUN find . -type f \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dll
     make -f mingw.mk all -j4
 COPY vendor/lua-cjson/ /src/lua-cjson/
 COPY components/skynet-llm/ /src/skynet-llm/
+COPY vendor/pluto/lualib-src/lua-aoi/ /src/pluto/lualib-src/lua-aoi/
+COPY vendor/pluto/LICENSE /src/pluto/LICENSE
+COPY components/skynet-aoi/ /src/skynet-aoi/
 COPY scripts/windows/ /src/windows/
 COPY tests/client-socket.c tests/demo-client.lua tests/https-check.lua ./tests/
 RUN bash /src/windows/compile.sh

@@ -76,3 +76,6 @@ discovery script still needs validation on a Windows PC.
 本次 master 迁移验收：64391f732e76507ea6615f312cb71be1fd7bfbdd，Lua 5.5.1。
 Linux 全套 mock 测试通过；Wine 离线 31 协议 + 6 SSE、36 传输、客户端及生命周期通过。
 真实模型 8 项通过；Responses SSE 缺少索引、reasoning 无法重放两项服务兼容性限制仍存在。
+
+Pluto AOI: run test-aoi.bat for offline AOI tests. Business code should require
+"skynet_aoi". See licenses/pluto-aoi/README.md for API and upstream limitations.

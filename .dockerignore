@@ -26,3 +26,15 @@ components/skynet-llm/luaclib/
 
 .local/
 **/llm-settings.bat
+
+!vendor/pluto/
+!vendor/pluto/LICENSE
+!vendor/pluto/lualib-src/
+!vendor/pluto/lualib-src/lua-aoi/
+!vendor/pluto/lualib-src/lua-aoi/lua_aoi.cpp
+!vendor/pluto/lualib-src/lua-aoi/aoi.hpp
+!vendor/pluto/lualib-src/lua-aoi/rect.hpp
+!components/skynet-aoi/
+!components/skynet-aoi/**
+components/skynet-aoi/luaclib/
+!tests/config-aoi

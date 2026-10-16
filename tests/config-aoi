@@ -1,0 +1,12 @@
+root = "$AOI_SKYNET_ROOT/"
+thread = 2
+harbor = 0
+start = "aoi_smoke"
+bootstrap = "snlua bootstrap"
+luaservice = "$AOI_TEST_DIR/?.lua;" .. root .. "service/?.lua"
+lualoader = root .. "lualib/loader.lua"
+lua_path = "$AOI_LUALIB/?.lua;" .. root .. "lualib/?.lua;" .. root .. "lualib/?/init.lua"
+lua_cpath = "$AOI_LUACLIB/?.so;" .. root .. "luaclib/?.so"
+cpath = root .. "cservice/?.so"
+aoi_test_dir = "$AOI_TEST_DIR"
+aoi_test_result = "$AOI_TEST_RESULT"

@@ -11,8 +11,8 @@ for tool in docker zip; do
     command -v "$tool" >/dev/null || { echo "Missing tool: $tool" >&2; exit 1; }
 done
 docker info >/dev/null 2>&1 || { echo 'Please start Docker Desktop first.' >&2; exit 1; }
-for source in vendor/skynet/skynet-src/skynet_main.c vendor/lua-cjson/lua_cjson.c; do
-    [[ -f "$source" ]] || { echo 'Run git submodule update --init --recursive first.' >&2; exit 1; }
+for source in vendor/skynet/skynet-src/skynet_main.c vendor/lua-cjson/lua_cjson.c vendor/pluto/lualib-src/lua-aoi/lua_aoi.cpp; do
+    [[ -f "$source" ]] || { echo 'Run ./scripts/update-submodules.sh first.' >&2; exit 1; }
 done
 mkdir -p dist
 STAGE=$(mktemp -d "$ROOT/dist/.windows-build.XXXXXXXX")

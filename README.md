@@ -9,7 +9,7 @@ Skynet 使用 Git 子模块：`.gitmodules` 中的 `branch = master` 指定远�
 在本目录执行：
 
 ```sh
-git submodule update --init --recursive
+./scripts/update-submodules.sh
 docker compose build
 docker compose up -d
 docker compose logs --tail=40
@@ -46,7 +46,7 @@ docker compose down
 在 macOS / Linux 上启动 Docker Desktop（或 Docker Engine），执行：
 
 ```sh
-git submodule update --init --recursive
+./scripts/update-submodules.sh
 ./scripts/build-windows.sh
 ```
 
@@ -86,12 +86,13 @@ Windows 兼容层直接来自 Skynet 子模块，保留的两份扩展补丁来�
   使用 HTTPS 的 Skynet 配置文件需设置 `enablessl = true`。
 - 编译镜像: `hanxi/skynet-builder@sha256:31b04c011d8d5c28840c51adececb0a5f5ceada0f50aeb46faa205e1ce552ea9`，使用 Docker 已配置的镜像加速器。
 
-首次克隆本项目时使用 `git clone --recurse-submodules <本项目地址>`，或克隆后运行 `git submodule update --init --recursive`，同时初始化 Skynet 和它的 jemalloc 子模块。更新后的源码在宿主机准备好，Docker 构建阶段不需要联网下载源码。许可证保留在源码目录。这是官方示例环境，simpledb 数据保存在内存，重启后丢失。
+首次克隆使用 `git clone <本项目地址>`，然后运行 `./scripts/update-submodules.sh`。脚本初始化三个顶层子模块，并仅递归初始化现有 Skynet 的 jemalloc；不要对整个仓库使用 `--recurse-submodules` / `--recursive`，否则还会拉取 Pluto 自带的另一个 Skynet。更新后的源码在宿主机准备好，Docker 构建阶段不需要联网下载源码。许可证保留在源码目录。这是官方示例环境，simpledb 数据保存在内存，重启后丢失。
 
 GitHub 拉取遇到网络问题时，按项目约定使用本机代理：
 
 ```sh
-git -c http.proxy=http://127.0.0.1:20890 submodule update --init --recursive
+git -c http.proxy=http://127.0.0.1:20890 submodule update --init vendor/skynet vendor/lua-cjson vendor/pluto
+git -C vendor/skynet -c http.proxy=http://127.0.0.1:20890 submodule update --init --recursive
 ```
 
 ## JSON 与 HTTPS 测试
@@ -109,3 +110,18 @@ docker compose exec -T skynet sh -c 'rm -f /tmp/skynet-features-result; ./skynet
 `components/skynet-llm` 提供 Chat Completions、Responses、Embeddings 和 SSE，工具执行留在业务层。Docker 构建会安装 Lua 模块、管理/worker 服务和独立的 OpenSSL TLS 扩展；该扩展启用证书链及主机名校验。
 
 使用方法见 [组件 README](components/skynet-llm/README.md)。运行 `./scripts/test-llm.sh mock` 验证本地协议、调度和 TLS 故障场景；`./scripts/test-llm.sh real` 使用 `.local/mao-models.env` 测试真实模型。`.local/` 已被 Git 与 Docker 构建排除。
+
+## Pluto AOI 子模块
+
+`vendor/pluto` 固定于 `0fdadf37ed121cb3e8c86d8cfa08ec00f0f84738`，只编译其中 `lualib-src/lua-aoi` 的二维整数网格 AOI，不使用 Pluto 的 Skynet 或其他依赖。Docker 和 Windows 构建使用本项目现有 Skynet 的 Lua 5.5.1 头文件与 ABI。
+
+业务推荐 `require "skynet_aoi"`，原始 `require "aoi"` 仅供内部验证。安全入口对参数、生命周期、重复 leave 事件和结果表复用做保护；不会实现地图服务或改变现有 Demo。API、上游已知问题、限制及测试方法见 [AOI 组件说明](components/skynet-aoi/README.md)。
+
+```sh
+./scripts/update-submodules.sh
+./scripts/test-aoi.sh docker
+# 已在宿主机编译 vendor/skynet 时：
+./scripts/test-aoi.sh native
+```
+
+Windows 包新增 `test-aoi.bat` 离线测试入口。此接入分支的实际验证为 Linux 原生构建、独立 Lua 和真实 Skynet 服务；Docker 镜像、macOS 和 Windows/MinGW/Wine 尚未在本次环境执行。
