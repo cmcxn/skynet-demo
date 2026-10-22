@@ -6,7 +6,8 @@ WORKDIR /src/skynet
 COPY vendor/skynet/ ./
 COPY patches/skynet-verified-client-tls.patch /tmp/skynet-verified-client-tls.patch
 RUN patch --batch -p1 < /tmp/skynet-verified-client-tls.patch
-RUN make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/usr/include && \
+RUN find . -type f \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dll' -o -name '*.exe' \) -delete && \
+    make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/usr/include && \
     mkdir -p /out/3rd/lua && \
     cp skynet /out/ && \
     cp -r cservice luaclib lualib service examples /out/ && \
