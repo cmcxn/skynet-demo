@@ -127,3 +127,28 @@ docker compose up -d --force-recreate
 测试：在具备 OpenSSL 3.5、C 编译器和 Lua 的 Linux 环境运行 `LUA=/path/to/lua sh scripts/test-tls.sh`，然后运行 `sh scripts/check-ca-trust.sh`。现有 LLM 集成测试为 `sh scripts/test-llm.sh mock`。在线站点访问失败不能替代离线信任链检查。
 
 若运行时覆盖 `SSL_CERT_FILE` / `SSL_CERT_DIR` 或 LLM `tls.ca_file` / `tls.ca_path`，需单独审计该信任库；构建时的系统 CA 检查不覆盖运行时注入的证书。`CA_CHECK_PACKAGE=0 sh scripts/check-ca-trust.sh /path/to/public-ca-bundle.crt` 可检查独立的公共 CA 包；此检查要求保留 ISRG Root X1 作为正常信任对照，不适用于仅含私有 CA 的包。
+
+## 原生 HTTP 客户端代理
+
+构建时的 `patches/skynet-verified-client-tls.patch` 同时提供原生 `http.httpc` 的 HTTP 正向代理、HTTPS CONNECT，以及现有 TLS/WSS 身份校验。TLS/CA 安全检查保持启用，WSS 仍直接连接。LLM 使用独立的 HTTP 通道，不读取这里的代理设置。
+
+- HTTP 依次读取 `http_proxy`、`all_proxy`、`ALL_PROXY`，忽略可能来自 CGI 请求头的 `HTTP_PROXY`。
+- HTTPS 依次读取 `https_proxy`、`HTTPS_PROXY`、`all_proxy`、`ALL_PROXY`。小写优先，空值停止代理回退。Windows 通过原始环境变量名称精确匹配，避免 `os.getenv` 的大小写折叠重新启用 `HTTP_PROXY`。
+- `no_proxy` 优先于 `NO_PROXY`；支持域名及子域边界、端口、IPv4/IPv6 字面量、IPv4 CIDR 和单独的 `*`。不支持 IPv6 CIDR，IPv6 按文本匹配。
+- `httpc.proxy = false` 强制直连；字符串指定代理（仍受 NO_PROXY 约束）；`nil` 使用环境变量。只支持 `http://` 代理，不支持的协议会报错。
+- 代理 URL 支持百分号编码的 Basic 认证。认证头只发往代理，不转发到目标，也不修改调用方的请求头表。HTTP 代理传输本身不加密。
+- 默认使用 OpenSSL 信任库；`httpc.cafile` / `httpc.capath` 可替换默认信任来源。自定义 CA 必须另行审计；不能跳过校验。
+- `httpc.timeout` 单位为 Skynet tick（10 毫秒），限制 DNS、建连、CONNECT、TLS 和响应读取的总预算，并清理超时的闲置流。未设置时保持无限等待语义。
+
+Compose 传递上述代理变量。Docker Desktop 访问宿主机代理应使用 `http://host.docker.internal:20890`，并确认代理允许容器访问；不要在容器内使用宿主机的 `127.0.0.1`。
+
+Linux 原生构建使用与 Docker/Windows 相同的补丁，包含 Lua 5.5 和 LLM 模块，并保留 CA 安全门禁：
+
+```sh
+sh scripts/build-native.sh
+sh scripts/test-proxy.sh .build/runtime
+sh scripts/test-tls.sh
+sh tests/patch-application.sh
+```
+
+原生构建需要 C 编译器、make、OpenSSL 3.5 开发包、autoconf、m4、Perl 和 patch；代理集成测试另需 Python 3。原生脚本以 Debian Linux 为基准，macOS 使用 Docker。代理集成测试只访问回环地址，使用临时证书，不依赖外部代理或真实模型。

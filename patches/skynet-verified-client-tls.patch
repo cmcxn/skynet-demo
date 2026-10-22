@@ -299,10 +299,438 @@ diff --git a/lualib-src/ltls.c b/lualib-src/ltls.c
      return 1;
  }
  
+diff --git a/lualib-src/lua-skynet.c b/lualib-src/lua-skynet.c
+--- a/lualib-src/lua-skynet.c
++++ b/lualib-src/lua-skynet.c
+@@ -9,6 +9,9 @@
+ #include <lua.h>
+ #include <lauxlib.h>
+ #include <stdlib.h>
++#ifdef _WIN32
++#include <windows.h>
++#endif
+ #include <string.h>
+ #include <assert.h>
+ #include <inttypes.h>
+@@ -495,6 +498,34 @@
+ 	return 0;
+ }
+ 
++/* Proxy selection needs original variable spelling, including on Windows.
++ * getenv() there is case-insensitive and would re-enable CGI HTTP_PROXY. */
++static int
++lgetenv_exact(lua_State *L) {
++    size_t len;
++    const char *name = luaL_checklstring(L, 1, &len);
++    luaL_argcheck(L, len > 0 && strlen(name) == len && strchr(name, '=') == NULL,
++        1, "invalid environment variable name");
++#ifdef _WIN32
++    LPCH block = GetEnvironmentStringsA();
++    if (block != NULL) {
++        for (const char *entry = block; *entry; entry += strlen(entry) + 1) {
++            size_t size = strlen(entry);
++            if (size > len && memcmp(entry, name, len) == 0 && entry[len] == '=') {
++                lua_pushlstring(L, entry + len + 1, size - len - 1);
++                FreeEnvironmentStringsA(block);
++                return 1;
++            }
++        }
++        FreeEnvironmentStringsA(block);
++    }
++    lua_pushnil(L);
++#else
++    lua_pushstring(L, getenv(name));
++#endif
++    return 1;
++}
++
+ LUAMOD_API int
+ luaopen_skynet_core(lua_State *L) {
+ 	luaL_checkversion(L);
+@@ -521,6 +552,7 @@
+ 		{ "packstring", lpackstring },
+ 		{ "trash" , ltrash },
+ 		{ "now", lnow },
++		{ "getenv_exact", lgetenv_exact },
+ 		{ "hpc", lhpc },	// getHPCounter
+ 		{ NULL, NULL },
+ 	};
+diff --git a/lualib/http/httpc.lua b/lualib/http/httpc.lua
+--- a/lualib/http/httpc.lua
++++ b/lualib/http/httpc.lua
+@@ -2,179 +2,178 @@
+ local socket = require "http.sockethelper"
+ local internal = require "http.internal"
+ local dns = require "skynet.dns"
+-
+-local string = string
+-local table = table
+-local pcall = pcall
+-local error = error
+-local pairs = pairs
++local proxy = require "http.proxy"
+ 
+ local httpc = {}
+-
+ local async_dns
+ 
+-function httpc.dns(server,port)
+-	async_dns = true
+-	dns.server(server,port)
+-end
+-
+-local default_port = {
+-	http = 80,
+-	https = 443,
+-}
+-
+-local function parse_host(host)
+-	local colon1 = host:find(":", 1, true)
+-	if not colon1 then
+-		-- no colon: bare hostname or bare ipv4
+-		local htype = host:find("^%d+%.%d+%.%d+%.%d+$") and "ipv4" or "hostname"
+-		return host, nil, htype
+-	end
+-
+-	if host:find(":", colon1 + 1, true) then
+-		-- two or more colons: ipv6
+-		local ipv6, port = host:match("^%[(.-)%]:?(%d*)$")
+-		if ipv6 then
+-			return ipv6, port ~= "" and tonumber(port) or nil, "ipv6"
+-		end
+-		error(string.format("Invalid host: bare IPv6 address '%s', use '[%s]' instead", host, host))
+-	end
+-
+-	-- single colon: host:port
+-	local h, port = host:match("^(.-):(%d+)$")
+-	if h then
+-		local htype = h:find("^%d+%.%d+%.%d+%.%d+$") and "ipv4" or "hostname"
+-		return h, tonumber(port), htype
+-	end
+-	return host, nil, "hostname"
+-end
+-
+-local function parse_url(host)
+-	local protocol, hostname = host:match "^(%a+)://(.*)"
+-	if protocol then
+-		protocol = string.lower(protocol)
+-	else
+-		protocol = "http"
+-		hostname = host
+-	end
+-	local hostheader = hostname
+-	local htype, port
+-	hostname, port, htype = parse_host(hostname)
+-	port = port or default_port[protocol]
+-	if not port then
+-		error("Invalid protocol: " .. protocol)
+-	end
+-	return protocol, hostname, port, htype, hostheader
+-end
+-
+-local SSLCTX_CLIENT = nil
+-local function gen_interface(protocol, fd, hostname)
+-	if protocol == "http" then
+-		return {
+-			init = nil,
+-			close = nil,
+-			read = socket.readfunc(fd),
+-			write = socket.writefunc(fd),
+-			readall = function ()
+-				return socket.readall(fd)
+-			end,
+-		}
+-	elseif protocol == "https" then
+-		local tls = require "http.tlshelper"
+-		SSLCTX_CLIENT = SSLCTX_CLIENT or tls.newctx()
+-		local tls_ctx = tls.newtls("client", SSLCTX_CLIENT, hostname)
+-		return {
+-			init = tls.init_requestfunc(fd, tls_ctx),
+-			close = tls.closefunc(tls_ctx),
+-			read = tls.readfunc(fd, tls_ctx),
+-			write = tls.writefunc(fd, tls_ctx),
+-			readall = tls.readallfunc(fd, tls_ctx),
+-		}
+-	else
+-		error(string.format("Invalid protocol: %s", protocol))
+-	end
+-end
+-
+-local function connect(host, timeout)
+-	local protocol, hostname, port, htype, hostheader = parse_url(host)
+-	local hostaddr = hostname
+-	if htype == "hostname" then
+-		if async_dns then
+-			local msg
+-			hostaddr, msg = dns.resolve(hostname)
+-			if not hostaddr then
+-				error(string.format("%s dns resolve failed msg:%s", hostname, msg))
+-			end
+-		end
+-	end
+-
+-	local fd = socket.connect(hostaddr, port, timeout)
+-	if not fd then
+-		error(string.format("%s connect error host:%s, port:%s, timeout:%s", protocol, hostname, port, timeout))
+-	end
+-	local interface = gen_interface(protocol, fd, htype == "hostname" and hostname or nil)
+-	if timeout then
+-		skynet.timeout(timeout, function()
+-			if not interface.finish then
+-				socket.shutdown(fd)	-- shutdown the socket fd, need close later.
+-			end
+-		end)
+-	end
+-	if interface.init then
+-		interface.init(htype == "hostname" and hostname or nil)
+-	end
+-	return fd, interface, hostheader
++function httpc.dns(server, port)
++    async_dns = true
++    dns.server(server, port)
++end
++
++local function plain_interface(fd)
++    return {
++        read = socket.readfunc(fd), write = socket.writefunc(fd),
++        readall = function() return socket.readall(fd) end,
++    }
+ end
+ 
+ local function close_interface(interface, fd)
+-	interface.finish = true
+-	socket.close(fd)
+-	if interface.close then
+-		interface.close()
+-		interface.close = nil
+-	end
+-end
+-
+-function httpc.request(method, hostname, url, recvheader, header, content)
+-	local fd, interface, host = connect(hostname, httpc.timeout)
+-	local ok , statuscode, body , header = pcall(internal.request, interface, method, host, url, recvheader, header, content)
+-	if ok then
+-		ok, body = pcall(internal.response, interface, statuscode, body, header)
+-	end
+-	close_interface(interface, fd)
+-	if ok then
+-		return statuscode, body
+-	else
+-		error(body or statuscode)
+-	end
+-end
+-
+-function httpc.head(hostname, url, recvheader, header, content)
+-	local fd, interface, host = connect(hostname, httpc.timeout)
+-	local ok , statuscode = pcall(internal.request, interface, "HEAD", host, url, recvheader, header, content)
+-	close_interface(interface, fd)
+-	if ok then
+-		return statuscode
+-	else
+-		error(statuscode)
+-	end
+-end
+-
+-function httpc.request_stream(method, hostname, url, recvheader, header, content)
+-	local fd, interface, host = connect(hostname, httpc.timeout)
+-	local ok , statuscode, body , header = pcall(internal.request, interface, method, host, url, recvheader, header, content)
+-	interface.finish = true -- don't shutdown fd in timeout
+-	local function close_fd()
+-		close_interface(interface, fd)
+-	end
+-	if not ok then
+-		close_fd()
+-		error(statuscode)
+-	end
+-	-- todo: stream support timeout
+-	local stream = internal.response_stream(interface, statuscode, body, header)
+-	stream._onclose = close_fd
+-	return stream
++    if interface.finish then return end
++    interface.finish = true
++    -- Release TLS even if the socket close raises (and preserve the original error).
++    local ok, err = pcall(socket.close, fd)
++    if interface.close then
++        interface.close()
++        interface.close = nil
++    end
++    if not ok then error(err, 0) end
++end
++
++local function tunnel(interface, origin, forward)
++    local authorization = forward.authorization and "Proxy-Authorization: "..forward.authorization.."\r\n" or ""
++    interface.write("CONNECT "..origin.connect_authority.." HTTP/1.1\r\nHost: "..
++        origin.connect_authority.."\r\n"..authorization.."\r\n")
++    local buffer = ""
++    -- Ignore a bounded number of informational responses, never a CONNECT body.
++    for _ = 1, 6 do
++        local boundary
++        while true do
++            boundary = buffer:find("\r\n\r\n", 1, true)
++            if boundary then
++                assert(boundary + 3 <= 8192, "Proxy CONNECT response headers too large")
++                break
++            end
++            assert(#buffer <= 8192, "Proxy CONNECT response headers too large")
++            local chunk = interface.read()
++            assert(chunk and #chunk > 0, "Proxy CONNECT response incomplete")
++            buffer = buffer .. chunk
++        end
++        local head, rest = buffer:sub(1, boundary + 3), buffer:sub(boundary + 4)
++        local statusline = head:match("^([^\r\n]+)\r\n")
++        local code = statusline and tonumber(statusline:match("^HTTP/1%.[01] (%d%d%d)%s.*$") or statusline:match("^HTTP/1%.[01] (%d%d%d)$"))
++        assert(code, "Invalid proxy CONNECT response")
++        if code >= 200 and code < 300 then return rest end
++        if code >= 200 or code == 101 then error("Proxy CONNECT failed (HTTP "..code..")", 0) end
++        buffer = rest
++    end
++    error("Too many proxy CONNECT informational responses", 0)
++end
++
++local function resolve(address, timeout)
++    if not timeout then return dns.resolve(address) end
++    local co = coroutine.running()
++    local active, done, ok, result = true, false
++    skynet.fork(function()
++        ok, result = pcall(dns.resolve, address)
++        done = true
++        if active then skynet.wakeup(co) end
++    end)
++    skynet.sleep(timeout)
++    active = false
++    assert(done, "HTTP DNS resolution timeout")
++    if not ok then error(result, 0) end
++    return result
++end
++
++local function connect(origin, forward, timeout)
++    local started = skynet.now()
++    local function remaining()
++        if timeout == nil then return end
++        local left = timeout - (skynet.now() - started)
++        assert(left > 0, "HTTP request timeout")
++        return left
++    end
++    local address, port = origin.host, origin.port
++    if forward then address, port = forward.host, forward.port end
++    if async_dns and not address:find(':',1,true) and not address:match('^%d+%.%d+%.%d+%.%d+$') then
++        address = resolve(address, remaining())
++    end
++    local fd = socket.connect(address, port, remaining())
++    assert(fd, "HTTP connection failed")
++    local interface = plain_interface(fd)
++    local ok, err = pcall(function()
++        if timeout then
++            skynet.timeout(remaining(), function()
++                if not interface.finish then
++                    socket.shutdown(fd)
++                    -- A caller may leave a returned stream idle indefinitely.
++                    if interface.streaming then pcall(close_interface, interface, fd) end
++                end
++            end)
++        end
++        local pre
++        if forward and origin.protocol == "https" then pre = tunnel(interface, origin, forward) end
++        if origin.protocol == "https" then
++            local tls = require "http.tlshelper"
++            -- Per-connection context allows CA configuration to change without stale trust.
++            local ctx = tls.newctx(httpc.cafile, httpc.capath)
++            local tls_ctx = tls.newtls("client", ctx, origin.host)
++            interface.close = tls.closefunc(tls_ctx)
++            interface.read = tls.readfunc(fd, tls_ctx)
++            interface.write = tls.writefunc(fd, tls_ctx)
++            interface.readall = tls.readallfunc(fd, tls_ctx)
++            tls.init_requestfunc(fd, tls_ctx, pre)(origin.host)
++        end
++    end)
++    if not ok then
++        pcall(close_interface, interface, fd)
++        error(err, 0)
++    end
++    return fd, interface
++end
++
++local function prepare(host, url, headers, method)
++    local origin = proxy.origin(host)
++    local forward = proxy.select(origin, httpc.proxy)
++    assert(type(url) == "string" and (url:sub(1,1) == "/" or (method == "OPTIONS" and url == "*")) and not url:find("[%z\r\n ]"), "Invalid HTTP request path")
++    local header = {}
++    for key, value in pairs(headers or {}) do
++        -- Never let proxy credentials cross a tunnel or reach a direct origin.
++        if key:lower() ~= "proxy-authorization" then header[key] = value end
++    end
++    if forward and origin.protocol == "http" then
++        url = "http://"..origin.authority..(url == "*" and "" or url)
++        if forward.authorization then header["Proxy-Authorization"] = forward.authorization end
++    end
++    return origin, forward, url, header
++end
++
++local function request(mode, method, hostname, url, recvheader, header, content)
++    local origin, forward
++    origin, forward, url, header = prepare(hostname, url, header, method)
++    local fd, interface = connect(origin, forward, httpc.timeout)
++    local ok, statuscode, body, response_header = pcall(internal.request, interface, method,
++        origin.authority, url, recvheader, header, content)
++    if ok and mode == "stream" then
++        local made, stream = pcall(internal.response_stream, interface, statuscode, body, response_header)
++        if made then
++            interface.streaming = true
++            stream._onclose = function() close_interface(interface, fd) end
++            return stream
++        end
++        ok, statuscode, body = false, stream, nil
++    elseif ok and mode ~= "head" then
++        ok, body = pcall(internal.response, interface, statuscode, body, response_header)
++    end
++    local cleanup, cleanup_error = pcall(close_interface, interface, fd)
++    if not ok then error(body or statuscode, 0) end
++    if not cleanup then error(cleanup_error, 0) end
++    if mode == "head" then return statuscode end
++    return statuscode, body
++end
++
++function httpc.request(method, ...)
++    return request("body", method, ...)
++end
++
++function httpc.head(...)
++    return request("head", "HEAD", ...)
++end
++
++function httpc.request_stream(method, ...)
++    return request("stream", method, ...)
+ end
+ 
+ function httpc.get(...)
+diff --git a/lualib/http/internal.lua b/lualib/http/internal.lua
+--- a/lualib/http/internal.lua
++++ b/lualib/http/internal.lua
+@@ -246,7 +246,12 @@
+ end
+ 
+ function stream:padding()
+-	return self._reading(self), self
++	local ok, data = pcall(self._reading, self)
++	if not ok then
++		self:close()
++		error(data, 0)
++	end
++	return data, self
+ end
+ 
+ stream.__close = stream.close
 diff --git a/lualib/http/tlshelper.lua b/lualib/http/tlshelper.lua
 --- a/lualib/http/tlshelper.lua
 +++ b/lualib/http/tlshelper.lua
-@@ -8,7 +8,7 @@
+@@ -3,12 +3,12 @@
+ 
+ local tlshelper = {}
+ 
+-function tlshelper.init_requestfunc(fd, tls_ctx)
+-    local readfunc = socket.readfunc(fd)
++function tlshelper.init_requestfunc(fd, tls_ctx, pre)
++    local readfunc = socket.readfunc(fd, pre ~= "" and pre or nil)
      local writefunc = socket.writefunc(fd)
      return function (hostname)
          if hostname then
@@ -407,40 +835,136 @@ diff --git a/lualib/http/websocket.lua b/lualib/http/websocket.lua
      if not is_ok then
          _close_websocket(ws_obj)
          error(err)
-diff --git a/lualib/http/httpc.lua b/lualib/http/httpc.lua
---- a/lualib/http/httpc.lua
-+++ b/lualib/http/httpc.lua
-@@ -112,16 +112,23 @@
- 	if not fd then
- 		error(string.format("%s connect error host:%s, port:%s, timeout:%s", protocol, hostname, port, timeout))
- 	end
--	local interface = gen_interface(protocol, fd, htype == "hostname" and hostname or nil)
--	if timeout then
--		skynet.timeout(timeout, function()
--			if not interface.finish then
--				socket.shutdown(fd)	-- shutdown the socket fd, need close later.
--			end
--		end)
--	end
--	if interface.init then
--		interface.init(htype == "hostname" and hostname or nil)
-+	local interface
-+	local ok, err = pcall(function()
-+		interface = gen_interface(protocol, fd, hostname)
-+		if timeout then
-+			skynet.timeout(timeout, function()
-+				if not interface.finish then socket.shutdown(fd) end
-+			end)
-+		end
-+		if interface.init then interface.init(hostname) end
-+	end)
-+	if not ok then
-+		if interface then
-+			interface.finish = true
-+			if interface.close then pcall(interface.close) end
-+		end
-+		pcall(socket.close, fd)
-+		error(err, 0)
- 	end
- 	return fd, interface, hostheader
- end
+diff --git a/lualib/http/proxy.lua b/lualib/http/proxy.lua
+new file mode 100644
+--- /dev/null
++++ b/lualib/http/proxy.lua
+@@ -0,0 +1,128 @@
++-- Deliberately supports HTTP forward proxies only. Configuration errors never
++-- fall back to direct egress, and diagnostics never include proxy credentials.
++local M = {}
++
++local function authority(value, default_port, message)
++    local host, port
++    if value:sub(1, 1) == '[' then
++        host, port = value:match('^%[([%x:%.]+)%]:(%d+)$')
++        if not host then host = value:match('^%[([%x:%.]+)%]$') end
++    else
++        host, port = value:match('^([%w%.%-_]+):(%d+)$')
++        if not host then host = value:match('^([%w%.%-_]+)$') end
++    end
++    port = port and tonumber(port) or default_port
++    assert(host and port and port >= 1 and port <= 65535, message)
++    return host, port
++end
++
++local function hostport(host, port)
++    return (host:find(':', 1, true) and '['..host..']' or host)..':'..port
++end
++
++function M.origin(value)
++    assert(type(value) == 'string', 'Invalid HTTP origin')
++    local scheme, rest = value:match('^([%a]+)://(.*)$')
++    local protocol = scheme and scheme:lower() or 'http'
++    assert(protocol == 'http' or protocol == 'https', 'Unsupported origin protocol')
++    local addr = rest or value
++    local host, port = authority(addr, protocol == 'https' and 443 or 80, 'Invalid HTTP origin')
++    return {protocol = protocol, host = host, port = port, authority = addr,
++        connect_authority = hostport(host, port)}
++end
++
++local function ipv4(s)
++    local a,b,c,d = s:match('^(%d+)%.(%d+)%.(%d+)%.(%d+)$')
++    if not a then return end
++    local n = 0
++    for _,part in ipairs{a,b,c,d} do
++        local v = tonumber(part)
++        if v > 255 then return end
++        n = n * 256 + v
++    end
++    return n
++end
++
++local function bypass(origin, value)
++    local hostname = origin.host:lower():gsub('%.$', '')
++    for item in (value or ''):gmatch('[^,]+') do
++        local entry = item:match('^%s*(.-)%s*$'):lower()
++        if entry == '*' then return true end
++        local network, bits = entry:match('^([%d%.]+)/(%d+)$')
++        if network then
++            local address, base = ipv4(hostname), ipv4(network)
++            bits = tonumber(bits)
++            if address and base and bits <= 32 and (address >> (32-bits)) == (base >> (32-bits)) then
++                return true
++            end
++        else
++            local host, port
++            if entry:sub(1,1) == '[' then
++                host, port = entry:match('^%[([^%]]+)%]:(%d+)$')
++                if not host then host = entry:match('^%[([^%]]+)%]$') end
++            else
++                host, port = entry:match('^([^:]+):(%d+)$')
++                host = host or entry
++            end
++            host = host and host:gsub('^%.', ''):gsub('%.$', '')
++            if host and host ~= '' and (not port or tonumber(port) == origin.port) then
++                if hostname == host then return true end
++                if not ipv4(hostname) and not hostname:find(':',1,true) and
++                    hostname:sub(-#host-1) == '.'..host then return true end
++            end
++        end
++    end
++    return false
++end
++
++local function decode(value)
++    assert(not value:gsub('%%%x%x',''):find('%%'), 'Invalid proxy credentials')
++    local result = value:gsub('%%(%x%x)', function(hex) return string.char(tonumber(hex,16)) end)
++    assert(not result:find('[%z\r\n]'), 'Invalid proxy credentials')
++    return result
++end
++
++local function parse(value)
++    assert(type(value) == 'string', 'Invalid HTTP proxy configuration')
++    local scheme, addr = value:match('^([%a][%w+.-]*)://(.*)$')
++    assert(scheme and scheme:lower() == 'http', 'Only http:// proxies are supported')
++    addr = addr:gsub('/$', '')
++    assert(not addr:find('[/\\?#%s%z]'), 'Invalid HTTP proxy configuration')
++    local credentials, endpoint = addr:match('^(.-)@([^@]+)$')
++    local authorization
++    if credentials then
++        local user, password = credentials:match('^([^:]*):(.*)$')
++        assert(user and not credentials:find('@',1,true), 'Invalid proxy credentials')
++        user, password = decode(user), decode(password)
++        assert(not user:find(':',1,true), 'Invalid proxy username')
++        authorization = 'Basic '..require('skynet.crypt').base64encode(user..':'..password)
++    end
++    local host, port = authority(endpoint or addr, 80, 'Invalid HTTP proxy endpoint')
++    return {host = host, port = port, authorization = authorization}
++end
++
++function M.select(origin, override, getenv)
++    if override == false then return end
++    if not getenv then
++        if package.config:sub(1, 1) == "\\" then
++            getenv = require("skynet.core").getenv_exact
++        else
++            getenv = os.getenv
++        end
++    end
++    local no_proxy = getenv('no_proxy')
++    if no_proxy == nil then no_proxy = getenv('NO_PROXY') end
++    if bypass(origin, no_proxy) then return end
++    local value = override
++    if value == nil then
++        value = getenv(origin.protocol .. '_proxy')
++        -- HTTP_PROXY is deliberately ignored: CGI may derive it from a request header.
++        if value == nil and origin.protocol == 'https' then value = getenv('HTTPS_PROXY') end
++        if value == nil then value = getenv('all_proxy') end
++        if value == nil then value = getenv('ALL_PROXY') end
++    end
++    if value == nil or value == '' then return end
++    return parse(value)
++end
++
++return M

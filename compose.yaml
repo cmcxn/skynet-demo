@@ -6,3 +6,12 @@ services:
     tty: true
     ports:
       - "127.0.0.1:8888:8888"
+    # Runtime proxy selection for native http.httpc; LLM transport is independent.
+    environment:
+      - http_proxy
+      - https_proxy
+      - HTTPS_PROXY
+      - all_proxy
+      - ALL_PROXY
+      - no_proxy
+      - NO_PROXY

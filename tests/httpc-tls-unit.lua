@@ -1,11 +1,13 @@
 -- Test origin identity propagation and resource cleanup in the real HTTP client.
 local fail, closed, tls_closed, identity, initial_identity
-package.loaded.skynet = {timeout=function() end}
+package.loaded.skynet = {timeout=function() end, now=function() return 0 end}
 package.loaded['skynet.dns'] = {}
 package.loaded['http.sockethelper'] = {
  connect=function() return 7 end,
  close=function(fd) assert(fd==7); closed=closed+1 end,
  shutdown=function() end,
+ readfunc=function() return function() return "" end end,
+ writefunc=function() return function() end end,
 }
 package.loaded['http.internal'] = {
  request=function() return 200, 'ok', {} end,
@@ -29,7 +31,9 @@ package.loaded['http.tlshelper'] = {
 local function fresh()
  closed,tls_closed,identity,initial_identity=0,0,nil,nil
  package.loaded['http.httpc']=nil
- return require 'http.httpc'
+ local http = require 'http.httpc'
+ http.proxy = false
+ return http
 end
 for _, case in ipairs{
  {'https://api.host1:8443','api.host1'},
