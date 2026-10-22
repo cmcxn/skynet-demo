@@ -67,4 +67,10 @@ grep -q "$tmp/results/arm64:/results" "$DOCKER_LOG"
 : > "$DOCKER_LOG"
 if SKYNET_PLATFORM=linux/amd64 FAKE_IMAGE_PLATFORM=linux/amd64 LLM_RESULTS_DIR="$tmp/results/amd64" LLM_SKIP_BUILD=1 LLM_TEST_ENV="$tmp/model.env" sh scripts/test-llm.sh real >/dev/null 2>&1; then exit 1; fi
 grep -q "$tmp/results/amd64:/results" "$DOCKER_LOG"
+# A report override must not prevent mock fixtures in a fresh checkout.
+fresh="$tmp/fresh"
+mkdir -p "$fresh/scripts" "$fresh/tests"
+cp scripts/test-llm.sh scripts/linux-platform.sh "$fresh/scripts/"
+cp tests/config-llm "$fresh/tests/"
+SKYNET_PLATFORM=linux/arm64 LLM_SKIP_BUILD=1 LLM_RESULTS_DIR="$tmp/external-results" sh "$fresh/scripts/test-llm.sh" mock
 echo 'PASS: Linux platform entrypoints'

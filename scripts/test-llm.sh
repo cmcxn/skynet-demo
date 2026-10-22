@@ -20,7 +20,7 @@ else
     if [ "$MODE" != real ]; then skynet_check_image_platform "$LLM_TEST_TOOLS_IMAGE"; fi
 fi
 LLM_RESULTS_DIR=${LLM_RESULTS_DIR:-$TASK_ROOT/.local/llm-results/$SKYNET_ARCH}
-mkdir -p "$LLM_RESULTS_DIR"
+mkdir -p "$TASK_ROOT/.local" "$LLM_RESULTS_DIR"
 LLM_RESULTS_DIR=$(CDPATH= cd -- "$LLM_RESULTS_DIR" && pwd)
 NETWORK="skynet-llm-test-$$"
 MOCK_CONTAINER="skynet-llm-fixture-$$"
