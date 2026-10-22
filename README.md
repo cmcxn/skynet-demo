@@ -102,7 +102,7 @@ docker compose exec -T skynet sh -c 'rm -f /tmp/skynet-features-result; ./skynet
 
 验证 JSON 编解码、拒绝无效 JSON、TLS 模块加载，以及向 `https://www.baidu.com/`、`https://httpbin.org/ip` 发起真实请求并解析 IP JSON（需要外网连接）。
 
-上游 `ltls` 客户端没有启用服务端证书验证；安装 CA 证书不会自动改变这一行为。原有 HTTPS 演示证明 TLS 加密请求可用，不证明证书及主机名验证已启用；LLM 组件使用单独的验证型 TLS 扩展。
+固定版本的上游 `ltls` 客户端没有启用服务端证书验证；本项目构建时应用下文的 TLS 补丁，强制验证证书链和目标身份。LLM 组件继续使用独立的验证型 TLS 扩展。
 
 ## Skynet 模型调用组件
 
@@ -128,7 +128,116 @@ docker compose up -d --force-recreate
 
 若运行时覆盖 `SSL_CERT_FILE` / `SSL_CERT_DIR` 或 LLM `tls.ca_file` / `tls.ca_path`，需单独审计该信任库；构建时的系统 CA 检查不覆盖运行时注入的证书。`CA_CHECK_PACKAGE=0 sh scripts/check-ca-trust.sh /path/to/public-ca-bundle.crt` 可检查独立的公共 CA 包；此检查要求保留 ISRG Root X1 作为正常信任对照，不适用于仅含私有 CA 的包。
 
-## 原生 HTTP 客户端代理
+## HTTP 代理与 TLS：改动和使用方法
+
+原 `fix/http-proxy-verified-tls` 分支的功能已移植到当前 master（`9cae819`）；旧分支已删除，正常使用 master 构建即可。
+
+### 改了哪些内容
+
+| 文件或模块 | 改动及作用 |
+| --- | --- |
+| `patches/skynet-verified-client-tls.patch` → `http.httpc` / 新增 `http.proxy` | HTTP 正向代理、HTTPS CONNECT、代理认证、NO_PROXY；保留 GET/POST/HEAD/流式调用接口 |
+| 同一补丁 → `ltls.c` / `http.tlshelper` / `http.websocket` | 强制验证证书链、DNS 主机名或 IP SAN，HTTPS 隧道仍验证目标服务器；支持自定义 CA；保留 WSS 校验 |
+| 同一补丁 → `http.internal` / `http.httpc` | 请求总超时、异常和流式读取清理；保留 CONNECT 响应后预读的数据，避免握手丢字节 |
+| 同一补丁 → `lua-skynet.c` | Windows 精确区分代理环境变量名称，保持小写优先及忽略 `HTTP_PROXY` 的行为 |
+| `compose.yaml` | 将代理与 NO_PROXY 环境变量传入容器 |
+| `scripts/apply-skynet-patches.sh` / `scripts/build-native.sh` | 对编译副本应用补丁，支持重复执行检查；Linux 原生构建包含 Lua 5.5、TLS、JSON 和 LLM |
+| `scripts/check-ca-trust.sh` / CA 测试证书 | 保留已有 CA 构建门禁，拒绝问题证书链；不是 Go 运行时补丁 |
+| `scripts/test-proxy.sh` / `tests/proxy-*` 等 | 代理配置、认证隔离、证书拒绝、超时与清理回归测试 |
+
+补丁作用于构建副本，`vendor/skynet` 源码不直接修改。Linux Docker、Windows 和 Linux 原生构建使用相同的代理/TLS 补丁。仅更新仓库或设置代理变量不会改变已运行的旧程序，需重新构建并重启；完整重建命令见上面的“TLS 安全更新”。
+
+### Docker：使用本机代理
+
+在项目目录、启动 Compose 的同一个终端执行：
+
+```sh
+export http_proxy=http://host.docker.internal:20890
+export https_proxy=http://host.docker.internal:20890
+export no_proxy=localhost,127.0.0.1,::1,.internal.example
+# 首次使用新代码时先构建；已有新镜像时只需重建容器。
+docker compose build
+docker compose up -d --force-recreate
+```
+
+`https_proxy` 的值也写 `http://`：表示先连接 HTTP 代理，再通过 CONNECT 建立到 HTTPS 目标的隧道。代理需允许 Docker 容器访问；`host.docker.internal` 是 Docker Desktop 的宿主机地址。Linux Docker Engine 需另行配置该名称或使用容器可达的宿主机地址。
+
+关闭代理时，在同一终端执行以下命令并重建容器：
+
+```sh
+unset http_proxy https_proxy HTTPS_PROXY all_proxy ALL_PROXY no_proxy NO_PROXY
+docker compose up -d --force-recreate
+```
+
+这里配置的是运行时 `http.httpc` 代理；Docker 构建过程中 APT、下载依赖所需的网络配置需单独设置。
+
+### Linux 原生与 Windows 便携包
+
+Linux 原生运行时在构建产物目录启动（同机代理使用 `127.0.0.1`）：
+
+```sh
+cd .build/runtime
+export http_proxy=http://127.0.0.1:20890
+export https_proxy=http://127.0.0.1:20890
+export no_proxy=localhost,127.0.0.1,::1
+./skynet examples/config
+```
+
+Windows 在完整解压的新便携包目录打开 **CMD**，设置后启动（仅影响该窗口及子进程）：
+
+```bat
+set "http_proxy=http://127.0.0.1:20890"
+set "https_proxy=http://127.0.0.1:20890"
+set "no_proxy=localhost,127.0.0.1,::1"
+call test-https.bat
+call start.bat
+```
+
+Windows 使用包内 `certs/ca-bundle.crt`；更新程序需完整替换便携包。`test-https.bat` 访问真实网站，需要外网及代理连通。
+
+### Lua：发请求、指定代理和 CA
+
+在启用 `enablessl = true` 的 Skynet 配置中运行服务，服务代码示例：
+
+```lua
+local skynet = require "skynet"
+local httpc = require "http.httpc"
+
+skynet.start(function()
+    httpc.timeout = 3000 -- 3000 tick = 30 秒，整个请求的总预算
+    httpc.proxy = nil    -- 使用环境变量；无代理配置时直连
+    local headers = {}
+    local ok, status, body = pcall(httpc.get, "https://httpbin.org", "/ip", headers)
+    if ok then
+        skynet.error("HTTP status:", status, "body:", body)
+    else
+        skynet.error("HTTPS 请求失败:", status)
+    end
+    skynet.exit()
+end)
+```
+
+`httpc.get` 的第一个参数是目标协议/主机（可带端口），第二个是路径及查询串；不要把代理地址当成目标，也不要把完整 URL 填到路径参数。
+
+其他配置可在请求前设置：
+
+```lua
+httpc.proxy = "http://127.0.0.1:20890" -- 显式代理，仍受 NO_PROXY 约束
+httpc.proxy = false                    -- 强制直连
+httpc.proxy = nil                      -- 恢复读取环境变量
+
+-- 只在使用私有 CA 时配置；该文件必须在运行环境内可读。
+httpc.cafile = "/etc/my-app/private-ca.pem"
+httpc.capath = nil
+-- 恢复默认 OpenSSL 信任库时，将 cafile、capath 都设为 nil。
+```
+
+这些是当前 Lua 服务中 `httpc` 模块的共享配置，应在服务初始化时统一设置，避免并发请求间来回修改。自定义 CA 会替换默认信任来源；域名/IP 不匹配、过期或不可信证书仍会报错，没有关闭验证的开关。流式请求使用 `httpc.request_stream`，提前结束消费时调用 `stream:close()`。
+
+代理认证可写为 `http://user:password@proxy.example:8080`；用户名/密码中的保留字符需百分号编码，例如 `u@ser` / `p:ss` 对应 `http://u%40ser:p%3Ass@proxy.example:8080`。不要把真实凭据提交进仓库。
+
+### 代理选择规则和边界
+
 
 构建时的 `patches/skynet-verified-client-tls.patch` 同时提供原生 `http.httpc` 的 HTTP 正向代理、HTTPS CONNECT，以及现有 TLS/WSS 身份校验。TLS/CA 安全检查保持启用，WSS 仍直接连接。LLM 使用独立的 HTTP 通道，不读取这里的代理设置。
 
@@ -142,7 +251,9 @@ docker compose up -d --force-recreate
 
 Compose 传递上述代理变量。Docker Desktop 访问宿主机代理应使用 `http://host.docker.internal:20890`，并确认代理允许容器访问；不要在容器内使用宿主机的 `127.0.0.1`。
 
-Linux 原生构建使用与 Docker/Windows 相同的补丁，包含 Lua 5.5 和 LLM 模块，并保留 CA 安全门禁：
+### 构建和回归测试
+
+Linux 原生构建使用与 Docker/Windows 相同的补丁，包含 Lua 5.5 和 LLM 模块，并保留 CA 安全门禁。在项目根目录执行：
 
 ```sh
 sh scripts/build-native.sh
@@ -152,3 +263,8 @@ sh tests/patch-application.sh
 ```
 
 原生构建需要 C 编译器、make、OpenSSL 3.5 开发包、autoconf、m4、Perl 和 patch；代理集成测试另需 Python 3。原生脚本以 Debian Linux 为基准，macOS 使用 Docker。代理集成测试只访问回环地址，使用临时证书，不依赖外部代理或真实模型。
+
+
+移植版本已验证：Linux Docker、Linux 原生运行时、Windows/Wine 各 49/49 个代理集成场景；TLS 25 项、LLM TLS 9 项、WSS 10 组及 LLM mock 回归通过，CA 门禁拒绝全部 12 条问题测试链。Windows/Wine 验证不能替代 Windows 实机测试。
+
+排查时先确认已替换新构建产物，再检查容器/进程的代理变量、NO_PROXY 是否命中、代理端口是否可达。`HTTP_PROXY` 被忽略是预期行为；证书校验失败应检查目标证书或 CA 配置。LLM 走独立通道，这些代理设置不会让模型请求自动走代理。
