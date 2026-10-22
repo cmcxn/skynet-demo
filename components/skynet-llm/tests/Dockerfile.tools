@@ -1,3 +1,4 @@
-FROM skynet-llm-build:dev
+ARG LLM_BUILD_IMAGE=skynet-llm-build:dev
+FROM ${LLM_BUILD_IMAGE}
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends python3 openssl && rm -rf /var/lib/apt/lists/*

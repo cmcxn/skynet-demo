@@ -3,13 +3,17 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-IMAGE=${PG_TEST_IMAGE:-skynet-postgres-demo:dev}
+. ./scripts/linux-platform.sh
+skynet_linux_platform
+IMAGE=${PG_TEST_IMAGE:-skynet-postgres-demo:dev-$SKYNET_ARCH}
 DB_IMAGE=${PG_DB_TEST_IMAGE:-pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a}
-TOOLS=${PG_TEST_TOOLS_IMAGE:-skynet-postgres-test-tools:dev}
+TOOLS=${PG_TEST_TOOLS_IMAGE:-skynet-postgres-test-tools:dev-$SKYNET_ARCH}
 if [ "${PG_SKIP_TOOLS_BUILD:-0}" != 1 ]; then
-  docker build -f components/skynet-postgres/tests/Dockerfile.tools -t "$TOOLS" .
+  docker build --platform "$SKYNET_PLATFORM" -f components/skynet-postgres/tests/Dockerfile.tools -t "$TOOLS" .
+else
+  skynet_check_image_platform "$TOOLS"
 fi
-if [ "${PG_SKIP_BUILD:-0}" != 1 ]; then docker build -t "$IMAGE" .; fi
+if [ "${PG_SKIP_BUILD:-0}" != 1 ]; then docker build --platform "$SKYNET_PLATFORM" -t "$IMAGE" .; else skynet_check_image_platform "$IMAGE"; fi
 mkdir -p .local/postgres-results
 RUN_DIR=$(mktemp -d "$ROOT/.local/postgres-run.XXXXXX")
 TAG="skynet-pg-test-$$"
@@ -20,10 +24,10 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 chmod 755 "$RUN_DIR"
-docker run --rm -v "$RUN_DIR:/fixtures" -v "$ROOT:/workspace:ro" --entrypoint sh "$TOOLS" /workspace/components/skynet-postgres/tests/generate-certs.sh /fixtures
+docker run --platform "$SKYNET_PLATFORM" --rm -v "$RUN_DIR:/fixtures" -v "$ROOT:/workspace:ro" --entrypoint sh "$TOOLS" /workspace/components/skynet-postgres/tests/generate-certs.sh /fixtures
 # Postgres requires a private key owned by its UID; prepare it inside the disposable container.
 docker network create "$TAG" >/dev/null
-docker run -d --name "$TAG-db" --network "$TAG" --network-alias db.test -v "$RUN_DIR:/fixtures:ro" \
+docker run --platform "$SKYNET_PLATFORM" -d --name "$TAG-db" --network "$TAG" --network-alias db.test -v "$RUN_DIR:/fixtures:ro" \
   -e POSTGRES_PASSWORD=temporary-test-password -e POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 \
   --entrypoint sh "$DB_IMAGE" -ec 'cp /fixtures/server.key /tmp/server.key; chown postgres /tmp/server.key; chmod 600 /tmp/server.key; exec /usr/local/bin/docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/fixtures/server.crt -c ssl_key_file=/tmp/server.key -c password_encryption=scram-sha-256' >/dev/null
 ready=0
@@ -32,11 +36,11 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 [ "$ready" = 1 ] || { docker logs "$TAG-db"; exit 1; }
-docker run -d --name "$TAG-fault" --network "$TAG" -v "$RUN_DIR:/fixtures:ro" -v "$ROOT:/workspace:ro" --entrypoint python3 "$TOOLS" /workspace/components/skynet-postgres/tests/fault-server.py >/dev/null
+docker run --platform "$SKYNET_PLATFORM" -d --name "$TAG-fault" --network "$TAG" -v "$RUN_DIR:/fixtures:ro" -v "$ROOT:/workspace:ro" --entrypoint python3 "$TOOLS" /workspace/components/skynet-postgres/tests/fault-server.py >/dev/null
 DB_HOST=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$TAG-db")
 FAULT_HOST=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$TAG-fault")
 # Production image contains everything required; tests add only Lua scripts and fixtures.
-docker run --rm --user 0 --network "$TAG" -v "$ROOT:/workspace:ro" -v "$RUN_DIR:/fixtures:ro" \
+docker run --platform "$SKYNET_PLATFORM" --rm --user 0 --network "$TAG" -v "$ROOT:/workspace:ro" -v "$RUN_DIR:/fixtures:ro" \
   -w /skynet -e "PG_TEST_HOST=$DB_HOST" -e "PG_FAULT_HOST=$FAULT_HOST" --entrypoint sh "$IMAGE" -ec '
   export LUA_PATH="./lualib/?.lua;./lualib/?/init.lua;;"
   export LUA_CPATH="./luaclib/?.so;;"
@@ -44,7 +48,7 @@ docker run --rm --user 0 --network "$TAG" -v "$ROOT:/workspace:ro" -v "$RUN_DIR:
   timeout 90 ./skynet /workspace/components/skynet-postgres/tests/config
 '
 if [ -n "${PG_NATIVE_RUNTIME:-}" ]; then
-  docker run --rm --network "$TAG" -v "$PG_NATIVE_RUNTIME:/skynet:ro" \
+  docker run --platform "$SKYNET_PLATFORM" --rm --network "$TAG" -v "$PG_NATIVE_RUNTIME:/skynet:ro" \
     -v "$ROOT:/workspace:ro" -v "$RUN_DIR:/fixtures:ro" -w /skynet \
     -e "PG_TEST_HOST=$DB_HOST" -e "PG_FAULT_HOST=$FAULT_HOST" --entrypoint sh "$TOOLS" -ec '
       export LUA_PATH="./lualib/?.lua;./lualib/?/init.lua;;" LUA_CPATH="./luaclib/?.so;;"

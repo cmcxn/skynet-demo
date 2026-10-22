@@ -1,6 +1,7 @@
 services:
   skynet:
-    image: skynet-demo:master-64391f7
+    image: ${SKYNET_IMAGE:-skynet-demo:master-64391f7}
+    platform: ${SKYNET_PLATFORM:-}
     build: .
     stdin_open: true
     tty: true
