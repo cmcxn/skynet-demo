@@ -47,6 +47,7 @@ components/skynet-aoi/luaclib/
 !patches/
 !patches/skynet-verified-client-tls.patch
 !scripts/check-ca-trust.sh
+!scripts/openssl-build-config.sh
 !tests/fixtures/
 !tests/fixtures/emudhra/
 !tests/fixtures/emudhra/**

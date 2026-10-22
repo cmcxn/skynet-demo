@@ -6,8 +6,7 @@ cd "$ROOT"
 BUILD=${BUILD_DIR:-"$ROOT/.build"}
 OUT=${1:-"$BUILD/runtime"}
 PLATFORM=${PLATFORM:-linux}
-TLS_INC=${TLS_INC:-/usr/include}
-TLS_LIB=${TLS_LIB:-/usr/lib/x86_64-linux-gnu}
+. "$ROOT/scripts/openssl-build-config.sh"
 JOBS=${JOBS:-4}
 mkdir -p "$BUILD" "$OUT"
 BUILD=$(CDPATH= cd -- "$BUILD" && pwd)
@@ -25,7 +24,7 @@ find "$SOURCE/skynet" "$SOURCE/lua-cjson" -type f \( -name '*.o' -o -name '*.a' 
 sh "$ROOT/scripts/apply-skynet-patches.sh" "$SOURCE/skynet"
 patch -d "$SOURCE/skynet" -p1 < "$ROOT/components/skynet-llm/patches/skynet-socket-flow-control.patch"
 sh "$ROOT/scripts/check-ca-trust.sh"
-make -C "$SOURCE/skynet" "$PLATFORM" -j"$JOBS" TLS_MODULE=ltls TLS_LIB="$TLS_LIB" TLS_INC="$TLS_INC"
+make -C "$SOURCE/skynet" "$PLATFORM" -j"$JOBS" CC="${CC:-cc}" TLS_MODULE=ltls TLS_LIB="$TLS_LIB" TLS_INC="$TLS_INC"
 make -C "$SOURCE/lua-cjson" LUA_VERSION=5.5 LUA_INCLUDE_DIR="$SOURCE/skynet/3rd/lua" CJSON_CFLAGS='-fpic -pthread -DMULTIPLE_THREADS' CJSON_LDFLAGS='-shared -pthread -lm'
 mkdir -p "$OUT/3rd/lua" "$OUT/tests/client" "$OUT/lualib-src"
 cp "$SOURCE/skynet/skynet" "$OUT/"
@@ -36,10 +35,10 @@ cp "$SOURCE/skynet/lualib-src/lua-clientsocket.c" "$OUT/lualib-src/"
 cp "$SOURCE/lua-cjson/cjson.so" "$OUT/luaclib/"
 cp -R "$SOURCE/lua-cjson/lua/cjson" "$OUT/lualib/"
 ${CC:-cc} -O2 -fPIC -shared -I"$SOURCE/skynet/3rd/lua" "$OUT/tests/client-socket.c" -o "$OUT/tests/client/socket.so" -lpthread
-make -B -C "$ROOT/components/skynet-llm" LUA_INC="$SOURCE/skynet/3rd/lua" OUT_DIR="$OUT/luaclib" OPENSSL_CFLAGS="-I$TLS_INC" OPENSSL_LIBS="-L$TLS_LIB -lssl -lcrypto"
+make -B -C "$ROOT/components/skynet-llm" LUA_INC="$SOURCE/skynet/3rd/lua" OUT_DIR="$OUT/luaclib" OPENSSL_CFLAGS="$OPENSSL_CFLAGS" OPENSSL_LIBS="$OPENSSL_LIBS"
 cp -R "$ROOT/components/skynet-llm/lualib/." "$OUT/lualib/"
 cp -R "$ROOT/components/skynet-llm/service/." "$OUT/service/"
-make -B -C "$ROOT/components/skynet-postgres" LUA_INC="$SOURCE/skynet/3rd/lua" OUT_DIR="$OUT/luaclib" OPENSSL_CFLAGS="-I$TLS_INC" OPENSSL_LIBS="-L$TLS_LIB -lssl -lcrypto"
+make -B -C "$ROOT/components/skynet-postgres" LUA_INC="$SOURCE/skynet/3rd/lua" OUT_DIR="$OUT/luaclib" OPENSSL_CFLAGS="$OPENSSL_CFLAGS" OPENSSL_LIBS="$OPENSSL_LIBS"
 cp -R "$ROOT/components/skynet-postgres/lualib/." "$OUT/lualib/"
 mkdir -p "$OUT/licenses/skynet-postgres"
 cp -R "$ROOT/components/skynet-postgres/licenses" "$OUT/licenses/skynet-postgres/"
