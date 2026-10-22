@@ -268,3 +268,16 @@ sh tests/patch-application.sh
 移植版本已验证：Linux Docker、Linux 原生运行时、Windows/Wine 各 49/49 个代理集成场景；TLS 25 项、LLM TLS 9 项、WSS 10 组及 LLM mock 回归通过，CA 门禁拒绝全部 12 条问题测试链。Windows/Wine 验证不能替代 Windows 实机测试。
 
 排查时先确认已替换新构建产物，再检查容器/进程的代理变量、NO_PROXY 是否命中、代理端口是否可达。`HTTP_PROXY` 被忽略是预期行为；证书校验失败应检查目标证书或 CA 配置。LLM 走独立通道，这些代理设置不会让模型请求自动走代理。
+
+
+## PostgreSQL 与 pgvector 数据库组件
+
+`components/skynet-postgres` 直接纳入 mao 项目的 pgmoon、pgvector 和 SHA-256 库，
+提供 Skynet 异步 PostgreSQL 连接、参数化查询、事务及向量类型支持。默认验证数据库
+TLS 证书链和目标身份，操作超时会关闭失效连接，认证随机数兼容 Windows。
+Docker、Windows 便携包和 Linux 原生构建均会安装该组件；不通过 HTTP 代理连接数据库。
+
+使用示例、TLS/CA、超时与事务并发约束、来源许可证见
+[数据库组件 README](components/skynet-postgres/README.md)。在项目根目录执行
+`sh scripts/test-postgres.sh`，运行隔离的临时 PostgreSQL + pgvector 及故障测试，
+不会连接现有业务数据库。

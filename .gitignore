@@ -6,3 +6,5 @@ components/skynet-llm/luaclib/
 llm-settings.bat
 
 /.build/
+
+components/skynet-postgres/luaclib/

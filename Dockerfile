@@ -29,6 +29,12 @@ RUN make -C /src/skynet-llm LUA_INC=/src/skynet/3rd/lua OUT_DIR=/out/luaclib && 
     cp -r /src/skynet-llm/patches /out/licenses/skynet-llm/ && \
     mkdir -p /out/licenses/skynet && cp /src/skynet/LICENSE /out/licenses/skynet/ && \
     cp /tmp/skynet-verified-client-tls.patch /out/licenses/skynet/
+COPY components/skynet-postgres/ /src/skynet-postgres/
+RUN make -C /src/skynet-postgres LUA_INC=/src/skynet/3rd/lua OUT_DIR=/out/luaclib && \
+    cp -r /src/skynet-postgres/lualib/. /out/lualib/ && \
+    mkdir -p /out/licenses/skynet-postgres && \
+    cp -r /src/skynet-postgres/licenses /out/licenses/skynet-postgres/ && \
+    cp /src/skynet-postgres/LICENSE /src/skynet-postgres/SOURCES.md /src/skynet-postgres/SOURCE-SHA256.json /src/skynet-postgres/README.md /out/licenses/skynet-postgres/
 COPY tests/client-socket.c tests/client-socket.c
 RUN mkdir -p /out/tests/client && \
     gcc -O2 -fPIC -shared -I3rd/lua tests/client-socket.c -o /out/tests/client/socket.so -lpthread

@@ -25,6 +25,7 @@ RUN find . -type f \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dll
     make -f mingw.mk all -j4
 COPY vendor/lua-cjson/ /src/lua-cjson/
 COPY components/skynet-llm/ /src/skynet-llm/
+COPY components/skynet-postgres/ /src/skynet-postgres/
 COPY scripts/windows/ /src/windows/
 COPY tests/client-socket.c tests/demo-client.lua tests/https-check.lua ./tests/
 RUN bash /src/windows/compile.sh
