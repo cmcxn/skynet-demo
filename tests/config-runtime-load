@@ -1,0 +1,11 @@
+root = "/skynet/"
+thread = 2
+harbor = 0
+enablessl = true
+start = "runtime-load"
+bootstrap = "snlua bootstrap"
+luaservice = "/workspace/tests/?.lua;" .. root .. "service/?.lua"
+lualoader = root .. "lualib/loader.lua"
+lua_path = root .. "lualib/?.lua;" .. root .. "lualib/?/init.lua"
+lua_cpath = root .. "luaclib/?.so"
+cpath = root .. "cservice/?.so"

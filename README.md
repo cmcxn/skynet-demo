@@ -6,6 +6,8 @@ Skynet 使用 Git 子模块：`.gitmodules` 中的 `branch = master` 指定远�
 
 ## 构建与启动
 
+Linux ARM64 / AMD64 共用 Dockerfile，分别构建和测试。平台选择、架构专用标签与运行命令见 [Linux 多架构指南](docs/linux-multiarch.md)，本轮证据见 [验证记录](docs/2026-10-22-linux-multiarch-validation.md)。
+
 在本目录执行：
 
 ```sh

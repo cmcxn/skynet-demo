@@ -157,7 +157,7 @@ DNS 默认读取 `/etc/resolv.conf`；可用进程环境变量 `SKYNET_LLM_DNS_S
 
 已构建时可加 `LLM_SKIP_BUILD=1`。每轮 mock 使用独立的本地 CA 和配置，结束后清理，避免并行测试互相覆盖证书。安装版 client 和 transport 以 UID 1000 运行，使用镜像内的 Lua、服务和 TLS 扩展；发布镜像也使用非 root 用户。真实 smoke test 会产生少量模型请求。
 
-真实测试汇总在 `.local/llm-results/real.json`，只记录状态、模型名、向量维度等信息。开始前移除旧报告；运行异常且未生成新报告时会明确提示。只有全部检查为 `PASS` 才返回成功，`FAIL`、`INCOMPATIBLE` 或 `UNSUPPORTED` 都返回非零状态。
+真实测试汇总按 Linux 架构保存在 `.local/llm-results/arm64/real.json` 或 `.local/llm-results/amd64/real.json`，也可用 `LLM_RESULTS_DIR` 指定独立目录。只记录状态、模型名、向量维度等信息。开始前移除对应目录中的旧报告；运行异常且未生成新报告时会明确提示。只有全部检查为 `PASS` 才返回成功，`FAIL`、`INCOMPATIBLE` 或 `UNSUPPORTED` 都返回非零状态。
 
 2026-10-12 的最终 Docker 验证通过：31 项协议测试、6 项 SSE 测试、35 项源码模式 transport 测试、35 项安装版 transport 测试，client、lifecycle、安装版 client 及五个示例全部通过。原有 TCP demo、lua-cjson 和 HTTPS 示例回归通过；安装文件、补丁和许可证与镜像产物一致。协议、运行时和传输层均完成独立审阅。
 
