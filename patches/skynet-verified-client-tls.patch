@@ -1,0 +1,446 @@
+diff --git a/lualib-src/ltls.c b/lualib-src/ltls.c
+--- a/lualib-src/ltls.c
++++ b/lualib-src/ltls.c
+@@ -5,6 +5,7 @@
+ #include <openssl/err.h>
+ #include <openssl/dh.h>
+ #include <openssl/ssl.h>
++#include <openssl/x509v3.h>
+ #include <openssl/conf.h>
+ #include <openssl/engine.h>
+ #include <lua.h>
+@@ -25,32 +26,36 @@
+     SSL_CTX* ctx;
+ };
+ 
+-// static int
+-// _ssl_verify_peer(int ok, X509_STORE_CTX* ctx) {
+-//     return 1;
+-// }
+-
++static void
++_free_context(struct tls_context* tls_p) {
++    SSL_free(tls_p->ssl); // SSL owns both BIOs after SSL_set_bio.
++    tls_p->ssl = NULL;
++    tls_p->in_bio = NULL;
++    tls_p->out_bio = NULL;
++    tls_p->is_close = true;
++}
+ 
+ static void
+ _init_bio(lua_State* L, struct tls_context* tls_p, struct ssl_ctx* ctx_p) {
+-    tls_p->ssl = SSL_new(ctx_p->ctx);
+-    if(!tls_p->ssl) {
++    SSL* ssl = SSL_new(ctx_p->ctx);
++    if(!ssl) {
+         luaL_error(L, "SSL_new failed");
+     }
+ 
+-    tls_p->in_bio = BIO_new(BIO_s_mem());
+-    if(!tls_p->in_bio) {
+-        luaL_error(L, "new in bio failed");
+-    }
+-    BIO_set_mem_eof_return(tls_p->in_bio, -1); /* see: https://www.openssl.org/docs/crypto/BIO_s_mem.html */
+-
+-    tls_p->out_bio = BIO_new(BIO_s_mem());
+-    if(!tls_p->out_bio) {
+-        luaL_error(L, "new out bio failed");
+-    }
+-    BIO_set_mem_eof_return(tls_p->out_bio, -1); /* see: https://www.openssl.org/docs/crypto/BIO_s_mem.html */
+-
+-    SSL_set_bio(tls_p->ssl, tls_p->in_bio, tls_p->out_bio);
++    BIO* in_bio = BIO_new(BIO_s_mem());
++    BIO* out_bio = BIO_new(BIO_s_mem());
++    if(!in_bio || !out_bio) {
++        BIO_free(in_bio);
++        BIO_free(out_bio);
++        SSL_free(ssl);
++        luaL_error(L, "new TLS bio failed");
++    }
++    BIO_set_mem_eof_return(in_bio, -1);
++    BIO_set_mem_eof_return(out_bio, -1);
++    SSL_set_bio(ssl, in_bio, out_bio);
++    tls_p->ssl = ssl;
++    tls_p->in_bio = in_bio;
++    tls_p->out_bio = out_bio;
+ }
+ 
+ 
+@@ -58,6 +63,8 @@
+ _init_client_context(lua_State* L, struct tls_context* tls_p, struct ssl_ctx* ctx_p) {
+     tls_p->is_server = false;
+     _init_bio(L, tls_p, ctx_p);
++    // Verification belongs to client SSL objects, never server contexts.
++    SSL_set_verify(tls_p->ssl, SSL_VERIFY_PEER, NULL);
+     SSL_set_connect_state(tls_p->ssl);
+ }
+ 
+@@ -70,10 +77,7 @@
+ 
+ static struct tls_context *
+ _check_context(lua_State* L, int idx) {
+-    struct tls_context* tls_p = (struct tls_context*)lua_touserdata(L, idx);
+-    if(!tls_p) {
+-        luaL_error(L, "need tls context");
+-    }
++    struct tls_context* tls_p = luaL_checkudata(L, idx, "_TLS_CONTEXT_METATABLE_");
+     if(tls_p->is_close) {
+         luaL_error(L, "context is closed");
+     }
+@@ -82,9 +86,9 @@
+ 
+ static struct ssl_ctx *
+ _check_sslctx(lua_State* L, int idx) {
+-    struct ssl_ctx* ctx_p = (struct ssl_ctx*)lua_touserdata(L, idx);
+-    if(!ctx_p) {
+-        luaL_error(L, "need sslctx");
++    struct ssl_ctx* ctx_p = luaL_checkudata(L, idx, "_TLS_SSLCTX_METATABLE_");
++    if(!ctx_p->ctx) {
++        luaL_error(L, "sslctx is closed");
+     }
+     return ctx_p;
+ }
+@@ -99,13 +103,9 @@
+ 
+ static int
+ _ltls_context_close(lua_State* L) {
+-    struct tls_context* tls_p = lua_touserdata(L, 1);
++    struct tls_context* tls_p = luaL_checkudata(L, 1, "_TLS_CONTEXT_METATABLE_");
+     if(!tls_p->is_close) {
+-        SSL_free(tls_p->ssl);
+-        tls_p->ssl = NULL;
+-        tls_p->in_bio = NULL; //in_bio and out_bio will be free when SSL_free is called
+-        tls_p->out_bio = NULL;
+-        tls_p->is_close = true;
++        _free_context(tls_p);
+     }
+     return 0;
+ }
+@@ -177,9 +177,11 @@
+ 
+     // first handshake; initiated by client
+     if(!SSL_is_init_finished(tls_p->ssl)) {
++        ERR_clear_error();
+         int ret = SSL_do_handshake(tls_p->ssl);
+         if(ret == 1) {
+-            return 0;
++            // A successful handshake can still generate the final TLS flight.
++            return _bio_read(L, tls_p) > 0 ? 1 : 0;
+         } else if (ret < 0) {
+             int err = SSL_get_error(tls_p->ssl, ret);
+             ERR_clear_error();
+@@ -189,6 +191,11 @@
+                     return 1;
+                 }
+             } else {
++                long verify = SSL_get_verify_result(tls_p->ssl);
++                if(!tls_p->is_server && verify != X509_V_OK) {
++                    luaL_error(L, "TLS certificate verification failed: %s",
++                        X509_verify_cert_error_string(verify));
++                }
+                 luaL_error(L, "SSL_do_handshake error:%d ret:%d", err, ret);
+             }
+         } else {
+@@ -267,19 +274,63 @@
+     return 1;
+ }
+ 
++static const char*
++_check_hostname(lua_State* L, int idx) {
++    size_t len;
++    if(lua_type(L, idx) != LUA_TSTRING) {
++        luaL_error(L, "client hostname is required");
++    }
++    const char* hostname = lua_tolstring(L, idx, &len);
++    if(len == 0 || len > 253 || strlen(hostname) != len || hostname[0] == '.' ||
++        strpbrk(hostname, "* /\\[]@?#%\t\r\n") != NULL) {
++        luaL_error(L, "invalid client hostname");
++    }
++    return hostname;
++}
++
++static void
++_set_client_hostname(lua_State* L, struct tls_context* tls_p, const char* hostname) {
++    X509_VERIFY_PARAM* param = SSL_get0_param(tls_p->ssl);
++    ASN1_OCTET_STRING* ip = a2i_IPADDRESS(hostname);
++    int ret;
++    SSL_set_hostflags(tls_p->ssl, X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS);
++    if(ip) {
++        // IP literals must match an iPAddress SAN and must never be sent as SNI.
++        ret = SSL_set1_host(tls_p->ssl, NULL) == 1 &&
++            X509_VERIFY_PARAM_set1_ip(param, ASN1_STRING_get0_data(ip),
++                ASN1_STRING_length(ip)) == 1 &&
++            SSL_set_tlsext_host_name(tls_p->ssl, NULL) == 1;
++        ASN1_OCTET_STRING_free(ip);
++    } else {
++        // A colon in a non-IP identity means a port or malformed IPv6 address.
++        ret = strchr(hostname, ':') == NULL &&
++            X509_VERIFY_PARAM_set1_ip(param, NULL, 0) == 1 &&
++            SSL_set1_host(tls_p->ssl, hostname) == 1 &&
++            SSL_set_tlsext_host_name(tls_p->ssl, hostname) == 1;
++    }
++    if(!ret) {
++        // Never leave a partially configured verification identity usable.
++        _free_context(tls_p);
++        ERR_clear_error();
++        luaL_error(L, "failed to configure client hostname verification");
++    }
++}
++
+ static int
+ _lset_ext_host_name(lua_State* L) {
+     struct tls_context* tls_p = _check_context(L, 1);
+-    size_t slen = 0;
+-    char* host = (char*)lua_tolstring(L, 2, &slen);
+-    int ret = SSL_set_tlsext_host_name(tls_p->ssl, host);
+-    lua_pushinteger(L, ret);
++    const char* hostname = _check_hostname(L, 2);
++    if(tls_p->is_server || !SSL_in_before(tls_p->ssl)) {
++        return luaL_error(L, "hostname must be set before the client handshake");
++    }
++    _set_client_hostname(L, tls_p, hostname);
++    lua_pushinteger(L, 1);
+     return 1;
+ }
+ 
+ static int
+ _lctx_gc(lua_State* L) {
+-    struct ssl_ctx* ctx_p = _check_sslctx(L, 1);
++    struct ssl_ctx* ctx_p = luaL_checkudata(L, 1, "_TLS_SSLCTX_METATABLE_");
+     if(ctx_p->ctx) {
+         SSL_CTX_free(ctx_p->ctx);
+         ctx_p->ctx = NULL;
+@@ -333,14 +384,11 @@
+ 
+ static int
+ lnew_ctx(lua_State* L) {
++    // Check options before pushing userdata, which otherwise occupies arg #1.
++    const char* cafile = luaL_optstring(L, 1, NULL);
++    const char* capath = luaL_optstring(L, 2, NULL);
+     struct ssl_ctx* ctx_p = (struct ssl_ctx*)lua_newuserdatauv(L, sizeof(*ctx_p), 0);
+-    ctx_p->ctx = SSL_CTX_new(SSLv23_method());
+-    if(!ctx_p->ctx) {
+-        unsigned int err = ERR_get_error();
+-        char buf[256];
+-        ERR_error_string_n(err, buf, sizeof(buf));
+-        luaL_error(L, "SSL_CTX_new client failed. %s\n", buf);
+-    }
++    ctx_p->ctx = NULL;
+ 
+     if(luaL_newmetatable(L, "_TLS_SSLCTX_METATABLE_")) {
+         luaL_Reg l[] = {
+@@ -355,30 +403,39 @@
+         lua_setfield(L, -2, "__gc");
+     }
+     lua_setmetatable(L, -2);
++    ERR_clear_error();
++    ctx_p->ctx = SSL_CTX_new(TLS_method());
++    if(!ctx_p->ctx) {
++        return luaL_error(L, "SSL_CTX_new failed");
++    }
++    int ret = (cafile || capath) ?
++        SSL_CTX_load_verify_locations(ctx_p->ctx, cafile, capath) :
++        SSL_CTX_set_default_verify_paths(ctx_p->ctx);
++    if(ret != 1) {
++        char buf[256];
++        ERR_error_string_n(ERR_get_error(), buf, sizeof(buf));
++        SSL_CTX_free(ctx_p->ctx);
++        ctx_p->ctx = NULL;
++        ERR_clear_error();
++        return luaL_error(L, "failed to load TLS trust locations: %s", buf);
++    }
+     return 1;
+ }
+ 
+ 
+ static int
+ lnew_tls(lua_State* L) {
+-    struct tls_context* tls_p = (struct tls_context*)lua_newuserdatauv(L, sizeof(*tls_p), 1);
+-    tls_p->is_close = false;
+     const char* method = luaL_optstring(L, 1, "nil");
+     struct ssl_ctx* ctx_p = _check_sslctx(L, 2);
++    bool is_client = strcmp(method, "client") == 0;
++    if(!is_client && strcmp(method, "server") != 0) {
++        return luaL_error(L, "invalid method:%s e.g[server, client]", method);
++    }
++    const char* hostname = is_client ? _check_hostname(L, 3) : NULL;
++    struct tls_context* tls_p = (struct tls_context*)lua_newuserdatauv(L, sizeof(*tls_p), 1);
++    memset(tls_p, 0, sizeof(*tls_p));
+     lua_pushvalue(L, 2);
+-    lua_setiuservalue(L, -2, 1); // set ssl_ctx associated to tls_context
+-
+-    if(strcmp(method, "client") == 0) {
+-        _init_client_context(L, tls_p, ctx_p);
+-        if (!lua_isnoneornil(L, 3)) {
+-            const char* hostname = luaL_checkstring(L, 3);
+-            SSL_set_tlsext_host_name(tls_p->ssl, hostname);
+-        }
+-    }else if(strcmp(method, "server") == 0) {
+-        _init_server_context(L, tls_p, ctx_p);
+-    } else {
+-        luaL_error(L, "invalid method:%s e.g[server, client]", method);
+-    }
++    lua_setiuservalue(L, -2, 1); // keep ssl_ctx alive for the TLS context
+ 
+     if(luaL_newmetatable(L, "_TLS_CONTEXT_METATABLE_")) {
+         luaL_Reg l[] = {
+@@ -395,7 +452,14 @@
+         lua_pushcfunction(L, _ltls_context_close);
+         lua_setfield(L, -2, "__gc");
+     }
++    // Install __gc before any OpenSSL allocation can fail.
+     lua_setmetatable(L, -2);
++    if(is_client) {
++        _init_client_context(L, tls_p, ctx_p);
++        _set_client_hostname(L, tls_p, hostname);
++    } else {
++        _init_server_context(L, tls_p, ctx_p);
++    }
+     return 1;
+ }
+ 
+diff --git a/lualib/http/tlshelper.lua b/lualib/http/tlshelper.lua
+--- a/lualib/http/tlshelper.lua
++++ b/lualib/http/tlshelper.lua
+@@ -8,7 +8,7 @@
+     local writefunc = socket.writefunc(fd)
+     return function (hostname)
+         if hostname then
+-            tls_ctx:set_ext_host_name(hostname)
++            if hostname then tls_ctx:set_ext_host_name(hostname) end
+         end
+         local ds1 = tls_ctx:handshake()
+         writefunc(ds1)
+@@ -90,8 +90,8 @@
+     end
+ end
+ 
+-function tlshelper.newctx()
+-    return c.newctx()
++function tlshelper.newctx(cafile, capath)
++    return c.newctx(cafile, capath)
+ end
+ 
+ function tlshelper.newtls(method, ssl_ctx, hostname)
+diff --git a/lualib/http/websocket.lua b/lualib/http/websocket.lua
+--- a/lualib/http/websocket.lua
++++ b/lualib/http/websocket.lua
+@@ -351,20 +351,31 @@
+             end,
+         }
+     elseif protocol == "wss" then
+-        local tls = require "http.tlshelper"
+-        SSLCTX_CLIENT = SSLCTX_CLIENT or tls.newctx()
+-        local tls_ctx = tls.newtls("client", SSLCTX_CLIENT, hostname)
+-        local init = tls.init_requestfunc(socket_id, tls_ctx)
+-        init()
+-        obj = {
+-            close = function ()
+-                socket.close(socket_id)
+-                tls.closefunc(tls_ctx)()
+-            end,
+-            read = tls.readfunc(socket_id, tls_ctx),
+-            write = tls.writefunc(socket_id, tls_ctx),
+-            readall = tls.readallfunc(socket_id, tls_ctx),
+-        }
++        local tls, tls_ctx
++        local ok, err = pcall(function ()
++            tls = require "http.tlshelper"
++            SSLCTX_CLIENT = SSLCTX_CLIENT or tls.newctx()
++            tls_ctx = tls.newtls("client", SSLCTX_CLIENT, hostname)
++            local init = tls.init_requestfunc(socket_id, tls_ctx)
++            init()
++            obj = {
++                close = function ()
++                    socket.close(socket_id)
++                    tls.closefunc(tls_ctx)()
++                end,
++                read = tls.readfunc(socket_id, tls_ctx),
++                write = tls.writefunc(socket_id, tls_ctx),
++                readall = tls.readallfunc(socket_id, tls_ctx),
++            }
++        end)
++        if not ok then
++            -- TLS verification may fail before the object enters ws_pool.
++            if tls_ctx then
++                pcall(function () tls.closefunc(tls_ctx)() end)
++            end
++            pcall(socket.close, socket_id)
++            error(err, 0)
++        end
+     else
+         error(string.format("invalid websocket protocol:%s", tostring(protocol)))
+     end
+@@ -477,22 +488,25 @@
+     end
+ 
+     assert(host)
+-    local host_addr, host_port = string.match(host, "^([^:]+):?(%d*)$")
+-    assert(host_addr and host_port)
+-    if host_port == "" then
+-        host_port = protocol == "ws" and 80 or 443
+-    end
+-    local hostname
+-    if not host_addr:match(".*%d+$") then
+-        hostname = host_addr
+-    end
++    local host_addr, host_port
++    if host:sub(1, 1) == "[" then
++        host_addr, host_port = host:match("^%[([^%]]+)%]:(%d+)$")
++        if not host_addr then host_addr = host:match("^%[([^%]]+)%]$") end
++    else
++        host_addr, host_port = host:match("^([^:]+):(%d+)$")
++        if not host_addr and not host:find(":", 1, true) then host_addr = host end
++    end
++    assert(host_addr and host_addr ~= "", "invalid websocket host")
++    host_port = host_port and tonumber(host_port) or (protocol == "ws" and 80 or 443)
++    assert(host_port >= 1 and host_port <= 65535, "invalid websocket port")
++    local hostname = host_addr
+ 
+     uri = uri == "" and "/" or uri
+     local socket_id = sockethelper.connect(host_addr, host_port, timeout)
+     local ws_obj = _new_client_ws(socket_id, protocol, hostname)
+     ws_obj.addr = host
+     
+-    local is_ok,err = pcall(write_handshake, ws_obj, host_addr, uri, header)
++    local is_ok,err = pcall(write_handshake, ws_obj, host, uri, header)
+     if not is_ok then
+         _close_websocket(ws_obj)
+         error(err)
+diff --git a/lualib/http/httpc.lua b/lualib/http/httpc.lua
+--- a/lualib/http/httpc.lua
++++ b/lualib/http/httpc.lua
+@@ -112,16 +112,23 @@
+ 	if not fd then
+ 		error(string.format("%s connect error host:%s, port:%s, timeout:%s", protocol, hostname, port, timeout))
+ 	end
+-	local interface = gen_interface(protocol, fd, htype == "hostname" and hostname or nil)
+-	if timeout then
+-		skynet.timeout(timeout, function()
+-			if not interface.finish then
+-				socket.shutdown(fd)	-- shutdown the socket fd, need close later.
+-			end
+-		end)
+-	end
+-	if interface.init then
+-		interface.init(htype == "hostname" and hostname or nil)
++	local interface
++	local ok, err = pcall(function()
++		interface = gen_interface(protocol, fd, hostname)
++		if timeout then
++			skynet.timeout(timeout, function()
++				if not interface.finish then socket.shutdown(fd) end
++			end)
++		end
++		if interface.init then interface.init(hostname) end
++	end)
++	if not ok then
++		if interface then
++			interface.finish = true
++			if interface.close then pcall(interface.close) end
++		end
++		pcall(socket.close, fd)
++		error(err, 0)
+ 	end
+ 	return fd, interface, hostheader
+ end

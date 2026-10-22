@@ -21,3 +21,7 @@ git -C vendor/skynet apply --check ../../components/skynet-llm/patches/skynet-so
 ```
 
 便携包 `licenses/` 保存上游许可证、本说明和实际使用的补丁。后续升级 master 固定提交时，需重新审阅补丁并重跑 Linux 与 Wine 回归；`.gitmodules` 的 `branch = master` 仅指定远程更新目标，真正版本仍由父仓库的子模块提交号固定。
+
+## 客户端 TLS 身份校验
+
+`patches/skynet-verified-client-tls.patch` 从本仓库 `origin/fix/http-proxy-verified-tls` 的 TLS 修复中提取并适配当前 Skynet，未包含代理功能。为原生 HTTPS/WSS 启用证书链和 DNS/IP 校验，修复握手失败的资源清理和最终握手报文处理。Linux、Windows 构建均应用此补丁，宿主机子模块不变。

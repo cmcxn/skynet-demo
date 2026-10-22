@@ -1,7 +1,10 @@
 ARG BUILDER_IMAGE=hanxi/skynet-builder@sha256:31b04c011d8d5c28840c51adececb0a5f5ceada0f50aeb46faa205e1ce552ea9
 FROM ${BUILDER_IMAGE} AS build
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates perl g++-mingw-w64-x86-64 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates perl openssl patch g++-mingw-w64-x86-64 && rm -rf /var/lib/apt/lists/*
+COPY scripts/check-ca-trust.sh /src/security/scripts/check-ca-trust.sh
+COPY tests/fixtures/emudhra/ /src/security/tests/fixtures/emudhra/
+RUN sh /src/security/scripts/check-ca-trust.sh
 # Static OpenSSL keeps the portable package independent of an installed OpenSSL.
 WORKDIR /src/openssl
 RUN curl -fL --retry 3 https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz -o /tmp/openssl.tar.gz && \
@@ -11,10 +14,12 @@ RUN curl -fL --retry 3 https://github.com/openssl/openssl/releases/download/open
     make -j4 && make install_dev && rm /tmp/openssl.tar.gz
 WORKDIR /src/skynet
 COPY vendor/skynet/ ./
+COPY patches/skynet-verified-client-tls.patch /src/windows/skynet-verified-client-tls.patch
 COPY scripts/windows/skynet-mingw-udp.patch /src/windows/skynet-mingw-udp.patch
 COPY components/skynet-llm/patches/skynet-socket-flow-control.patch /src/windows/skynet-socket-flow-control.patch
 # Discard host build products, then cache the core build separately from packaging.
 RUN find . -type f \( -name '*.o' -o -name '*.a' -o -name '*.so' -o -name '*.dll' -o -name '*.exe' \) -delete && \
+    patch --batch --forward -p1 < /src/windows/skynet-verified-client-tls.patch && \
     patch --batch --forward -p1 < /src/windows/skynet-mingw-udp.patch && \
     patch --batch --forward -p1 < /src/windows/skynet-socket-flow-control.patch && \
     make -f mingw.mk all -j4

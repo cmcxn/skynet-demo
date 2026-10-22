@@ -1,6 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "SSL_CERT_FILE=%~dp0certs\ca-bundle.crt"
+set "SSL_CERT_DIR=%~dp0certs"
 chcp 65001 >nul
 lua.exe tests/llm-smoke.lua
 if errorlevel 1 goto failed
@@ -24,7 +26,6 @@ if not defined SKYNET_LLM_DNS_SERVER (
     echo DNS discovery failed. Set SKYNET_LLM_DNS_SERVER in llm-settings.bat.
     goto failed
 )
-set "SSL_CERT_FILE=%~dp0certs\ca-bundle.crt"
 del /q llm-real-result.json llm-test-result.txt llm-test.log >nul 2>&1
 echo Running live model tests. This sends billable API requests. start.bat is not required.
 skynet.exe tests\config-llm > llm-test.log 2>&1

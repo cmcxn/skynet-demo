@@ -35,7 +35,12 @@ cp /src/pluto/LICENSE /src/skynet-aoi/README.md /out/licenses/pluto-aoi/
 cp -r /src/skynet-llm/lualib/. /out/lualib/
 cp -r /src/skynet-llm/service/. /out/service/
 mkdir -p /out/certs /out/tests/llm-unit /out/licenses/skynet-llm
+sh /src/security/scripts/check-ca-trust.sh
 cp /etc/ssl/certs/ca-certificates.crt /out/certs/ca-bundle.crt
+# Check the exact file shipped, then record its package version and digest.
+sh /src/security/scripts/check-ca-trust.sh /out/certs/ca-bundle.crt
+dpkg-query -W ca-certificates > /out/certs/source-package.txt
+(cd /out/certs && sha256sum ca-bundle.crt > SHA256SUMS)
 for unit in protocol sse; do
     sed 's@components/skynet-llm/lualib/@lualib/@g' \
         "/src/skynet-llm/tests/unit/$unit.lua" > "/out/tests/llm-unit/$unit.lua"
@@ -65,6 +70,7 @@ cat 3rd/lua/README 3rd/lua/lua.h > /out/licenses/lua.txt
 cp /src/lua-cjson/LICENSE /out/licenses/lua-cjson.txt
 cp /src/openssl/LICENSE.txt /out/licenses/openssl.txt
 cp /src/windows/skynet-mingw-udp.patch /out/licenses/skynet-mingw-udp.patch
+cp /src/windows/skynet-verified-client-tls.patch /out/licenses/
 cp /src/windows/PATCH-SOURCES.md /out/licenses/
 cp /usr/share/doc/gcc-mingw-w64-base/copyright /out/licenses/gcc-mingw-w64.txt
 cp /usr/share/doc/mingw-w64-common/copyright /out/licenses/mingw-w64.txt

@@ -38,3 +38,20 @@ components/skynet-llm/luaclib/
 !components/skynet-aoi/**
 components/skynet-aoi/luaclib/
 !tests/config-aoi
+
+!patches/
+!patches/skynet-verified-client-tls.patch
+!scripts/check-ca-trust.sh
+!tests/fixtures/
+!tests/fixtures/emudhra/
+!tests/fixtures/emudhra/**
+
+# Never copy host-native build artifacts into Linux/MinGW build stages.
+**/*.o
+**/*.a
+**/*.so
+**/*.dll
+**/*.exe
+vendor/skynet/skynet
+vendor/skynet/3rd/lua/lua
+vendor/skynet/3rd/lua/luac

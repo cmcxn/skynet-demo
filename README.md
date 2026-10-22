@@ -125,3 +125,21 @@ docker compose exec -T skynet sh -c 'rm -f /tmp/skynet-features-result; ./skynet
 ```
 
 Windows 包新增 `test-aoi.bat` 离线测试入口。此接入分支的实际验证为 Linux 原生构建、独立 Lua 和真实 Skynet 服务；Docker 镜像、macOS 和 Windows/MinGW/Wine 尚未在本次环境执行。
+
+## TLS 安全更新（2026-10-22）
+
+原生 `http.httpc` / WSS 客户端通过 `patches/skynet-verified-client-tls.patch` 强制校验证书链和 DNS 主机名/IP SAN；失败时拒绝连接，不提供跳过验证开关。私有 CA 可通过 OpenSSL 的 `SSL_CERT_FILE` / `SSL_CERT_DIR` 指定。Windows 启动 BAT 默认使用包内 `certs/ca-bundle.crt`，不读取 Windows 系统证书库。
+
+Linux 和 Windows 构建使用 `scripts/check-ca-trust.sh` 检查 Debian CA 修复版本，并离线验证 eMudhra 的 12 条公开测试链都被拒绝。固定验证时间避免证书过期造成假通过。CA 包过旧、仍接受链或检查异常都会阻止构建。证书来源与摘要见 `tests/fixtures/emudhra/README.txt`。
+
+CA 安全更新后必须重新构建并替换旧镜像/Windows 包；已发布产物不会自动更新：
+
+```sh
+docker compose build --pull --no-cache
+docker compose up -d --force-recreate
+./scripts/build-windows.sh
+```
+
+测试：在具备 OpenSSL 3.5、C 编译器和 Lua 的 Linux 环境运行 `LUA=/path/to/lua sh scripts/test-tls.sh`，然后运行 `sh scripts/check-ca-trust.sh`。现有 LLM 集成测试为 `sh scripts/test-llm.sh mock`。在线站点访问失败不能替代离线信任链检查。
+
+若运行时覆盖 `SSL_CERT_FILE` / `SSL_CERT_DIR` 或 LLM `tls.ca_file` / `tls.ca_path`，需单独审计该信任库；构建时的系统 CA 检查不覆盖运行时注入的证书。`CA_CHECK_PACKAGE=0 sh scripts/check-ca-trust.sh /path/to/public-ca-bundle.crt` 可检查独立的公共 CA 包；此检查要求保留 ISRG Root X1 作为正常信任对照，不适用于仅含私有 CA 的包。
