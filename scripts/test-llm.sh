@@ -44,7 +44,11 @@ if [ "$MODE" != real ]; then
     docker run --platform "$SKYNET_PLATFORM" --rm -v "$LLM_RUN_DIR/fixtures:/fixtures" \
         -v "$TASK_ROOT/components/skynet-llm/tests:/tests:ro" --entrypoint sh \
         "$LLM_TEST_TOOLS_IMAGE" /tests/generate_certs.sh /fixtures
-    docker network create "$NETWORK" >/dev/null
+    if [ -n "${LLM_TEST_SUBNET:-}" ]; then
+        docker network create --subnet "$LLM_TEST_SUBNET" "$NETWORK" >/dev/null
+    else
+        docker network create "$NETWORK" >/dev/null
+    fi
     docker run --platform "$SKYNET_PLATFORM" -d --name "$MOCK_CONTAINER" --network "$NETWORK" --network-alias mock --network-alias wronghost \
         -v "$LLM_RUN_DIR/fixtures:/fixtures:ro" \
         -v "$TASK_ROOT/components/skynet-llm/tests:/tests:ro" --entrypoint python3 \

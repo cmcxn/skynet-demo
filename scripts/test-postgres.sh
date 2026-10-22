@@ -26,7 +26,11 @@ trap cleanup EXIT HUP INT TERM
 chmod 755 "$RUN_DIR"
 docker run --platform "$SKYNET_PLATFORM" --rm -v "$RUN_DIR:/fixtures" -v "$ROOT:/workspace:ro" --entrypoint sh "$TOOLS" /workspace/components/skynet-postgres/tests/generate-certs.sh /fixtures
 # Postgres requires a private key owned by its UID; prepare it inside the disposable container.
-docker network create "$TAG" >/dev/null
+if [ -n "${PG_TEST_SUBNET:-}" ]; then
+  docker network create --subnet "$PG_TEST_SUBNET" "$TAG" >/dev/null
+else
+  docker network create "$TAG" >/dev/null
+fi
 docker run --platform "$SKYNET_PLATFORM" -d --name "$TAG-db" --network "$TAG" --network-alias db.test -v "$RUN_DIR:/fixtures:ro" \
   -e POSTGRES_PASSWORD=temporary-test-password -e POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256 \
   --entrypoint sh "$DB_IMAGE" -ec 'cp /fixtures/server.key /tmp/server.key; chown postgres /tmp/server.key; chmod 600 /tmp/server.key; exec /usr/local/bin/docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/fixtures/server.crt -c ssl_key_file=/tmp/server.key -c password_encryption=scram-sha-256' >/dev/null

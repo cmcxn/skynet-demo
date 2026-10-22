@@ -73,4 +73,9 @@ mkdir -p "$fresh/scripts" "$fresh/tests"
 cp scripts/test-llm.sh scripts/linux-platform.sh "$fresh/scripts/"
 cp tests/config-llm "$fresh/tests/"
 SKYNET_PLATFORM=linux/arm64 LLM_SKIP_BUILD=1 LLM_RESULTS_DIR="$tmp/external-results" sh "$fresh/scripts/test-llm.sh" mock
+: > "$DOCKER_LOG"
+SKYNET_PLATFORM=linux/arm64 PG_TEST_SUBNET=10.253.201.0/24 sh scripts/test-postgres.sh
+SKYNET_PLATFORM=linux/arm64 LLM_TEST_SUBNET=10.253.202.0/24 sh scripts/test-llm.sh mock
+grep -q '^network create --subnet 10.253.201.0/24 skynet-pg-test-' "$DOCKER_LOG"
+grep -q '^network create --subnet 10.253.202.0/24 skynet-llm-test-' "$DOCKER_LOG"
 echo 'PASS: Linux platform entrypoints'
