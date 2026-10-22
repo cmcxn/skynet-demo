@@ -9,3 +9,4 @@ components/skynet-aoi/luaclib/
 /.build/
 
 components/skynet-postgres/luaclib/
+/.codegraph/
