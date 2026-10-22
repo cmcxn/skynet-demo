@@ -1,6 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+set "SSL_CERT_FILE=%~dp0certs\ca-bundle.crt"
+set "SSL_CERT_DIR=%~dp0certs"
 lua.exe tests/smoke.lua
 if errorlevel 1 goto failed
 echo Testing Baidu HTTPS and httpbin HTTPS JSON. Internet access is required.

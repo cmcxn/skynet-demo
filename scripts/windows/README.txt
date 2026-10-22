@@ -18,8 +18,11 @@ Includes Lua 5.5.1, lua-cjson and statically linked OpenSSL 3.5.9 for HTTPS.
 lua54.dll is the upstream build's legacy filename; its contents are Lua 5.5.1.
 All native modules are rebuilt together. Do not mix DLLs with an older package.
 Native .so files are Windows DLLs, retaining Skynet's standard module filenames.
-The upstream ltls client does not verify server certificates/hostnames.
-The separate skynet_llm_tls module DOES verify both, using the bundled CA file.
+The patched ltls client verifies server certificates and DNS/IP identities.
+Both ltls and skynet_llm_tls use the updated bundled CA file.
+Launch BAT files set SSL_CERT_FILE/SSL_CERT_DIR for this process.
+certs/source-package.txt and certs/SHA256SUMS identify the shipped trust bundle.
+Replace the entire old package after a CA security update.
 This package keeps the upstream example's network binding configuration.
 
 Windows compatibility code and mingw.mk come directly from cloudwu/skynet

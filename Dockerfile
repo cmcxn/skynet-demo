@@ -1,9 +1,11 @@
 ARG BUILDER_IMAGE=hanxi/skynet-builder@sha256:31b04c011d8d5c28840c51adececb0a5f5ceada0f50aeb46faa205e1ce552ea9
 FROM ${BUILDER_IMAGE} AS build
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev patch openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/skynet
 COPY vendor/skynet/ ./
+COPY patches/skynet-verified-client-tls.patch /tmp/skynet-verified-client-tls.patch
+RUN patch --batch -p1 < /tmp/skynet-verified-client-tls.patch
 RUN make linux -j4 TLS_MODULE=ltls TLS_LIB=/usr/lib/x86_64-linux-gnu TLS_INC=/usr/include && \
     mkdir -p /out/3rd/lua && \
     cp skynet /out/ && \
@@ -25,13 +27,20 @@ RUN make -C /src/skynet-llm LUA_INC=/src/skynet/3rd/lua OUT_DIR=/out/luaclib && 
     mkdir -p /out/licenses/skynet-llm && \
     cp /src/skynet-llm/LICENSE /out/licenses/skynet-llm/ && \
     cp -r /src/skynet-llm/patches /out/licenses/skynet-llm/ && \
-    mkdir -p /out/licenses/skynet && cp /src/skynet/LICENSE /out/licenses/skynet/
+    mkdir -p /out/licenses/skynet && cp /src/skynet/LICENSE /out/licenses/skynet/ && \
+    cp /tmp/skynet-verified-client-tls.patch /out/licenses/skynet/
 COPY tests/client-socket.c tests/client-socket.c
 RUN mkdir -p /out/tests/client && \
     gcc -O2 -fPIC -shared -I3rd/lua tests/client-socket.c -o /out/tests/client/socket.so -lpthread
 
 FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends libssl3t64 ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libssl3t64 ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+COPY scripts/check-ca-trust.sh /tmp/ca-check/scripts/check-ca-trust.sh
+COPY tests/fixtures/emudhra/ /tmp/ca-check/tests/fixtures/emudhra/
+RUN sh /tmp/ca-check/scripts/check-ca-trust.sh && \
+    mkdir -p /usr/local/share/skynet && \
+    dpkg-query -W ca-certificates libssl3t64 > /usr/local/share/skynet/tls-packages.txt && \
+    rm -rf /tmp/ca-check
 LABEL org.opencontainers.image.source="https://github.com/cloudwu/skynet" \
       org.opencontainers.image.version="master-64391f7" \
       org.opencontainers.image.revision="64391f732e76507ea6615f312cb71be1fd7bfbdd"
