@@ -32,6 +32,14 @@ cp -r /src/skynet-aoi/lualib/. /out/lualib/
 mkdir -p /out/tests/aoi /out/licenses/pluto-aoi
 cp /src/skynet-aoi/tests/unit.lua /out/tests/aoi/
 cp /src/pluto/LICENSE /src/skynet-aoi/README.md /out/licenses/pluto-aoi/
+"$CC" "${COMMON[@]}" -std=c11 -Wall -Wextra -Werror -I/opt/openssl/include \
+    /src/skynet-postgres/lualib-src/skynet_postgres_native.c -o /out/luaclib/skynet_postgres_native.so -llua54 \
+    /opt/openssl/lib64/libssl.a /opt/openssl/lib64/libcrypto.a -lws2_32 -lcrypt32 -lbcrypt -liphlpapi
+cp -r /src/skynet-postgres/lualib/. /out/lualib/
+mkdir -p /out/licenses/skynet-postgres
+cp -r /src/skynet-postgres/licenses /out/licenses/skynet-postgres/
+cp /src/skynet-postgres/{LICENSE,SOURCES.md,SOURCE-SHA256.json,README.md} /out/licenses/skynet-postgres/
+
 cp -r /src/skynet-llm/lualib/. /out/lualib/
 cp -r /src/skynet-llm/service/. /out/service/
 mkdir -p /out/certs /out/tests/llm-unit /out/licenses/skynet-llm
@@ -81,7 +89,7 @@ while :; do
     added=0
     while IFS= read -r dll; do
         case "${dll,,}" in
-            kernel32.dll|msvcrt.dll|user32.dll|gdi32.dll|ws2_32.dll|advapi32.dll|crypt32.dll|bcrypt.dll|ntdll.dll|secur32.dll|shell32.dll|ole32.dll|ucrtbase.dll|api-ms-win-*.dll) continue ;;
+            iphlpapi.dll|kernel32.dll|msvcrt.dll|user32.dll|gdi32.dll|ws2_32.dll|advapi32.dll|crypt32.dll|bcrypt.dll|ntdll.dll|secur32.dll|shell32.dll|ole32.dll|ucrtbase.dll|api-ms-win-*.dll) continue ;;
         esac
         [[ -f "/out/$dll" ]] && continue
         dep=$("$CC" -print-file-name="$dll")

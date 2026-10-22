@@ -1,0 +1,12 @@
+{
+  "sha2.lua": "c05ec9c973e651df435b983a7e215ae8ad5f1792adb205c11dea1ff4f1a2c365",
+  "pgvector.lua": "ed67896b0ea64d1d0e924d10cf027ccdd17f4513afff72fb0910aa70adf4f915",
+  "pgmoon/init.lua": "f7e14378826396bcfd462cc8f8b780e01ee9447e093ec92d9905e9b35670ef38",
+  "pgmoon/crypto.lua": "37f2b75e9be6fac00c576281bb79709b6ffc8f5c067985236716161ddee45e6a",
+  "pgmoon/hstore.lua": "82ded8ff28a0380187b6b47ac3c4729a4189b4e6c6e9b0eceb9f499a330eafc6",
+  "pgmoon/json.lua": "7a8e8c1c2f45d6330c92440ea7838a2eaec132795b3ff2c094cd28789303d905",
+  "pgmoon/arrays.lua": "0e3dd9783ca1a01e9484eaa7db647c8d1cdbc639f8dd57b4a9769fe110f13836",
+  "pgmoon/bit.lua": "a7e746e7bdc011dd11468bf72f5cc4f36a43a6b8e545c415ea46fdeab0d2aac0",
+  "pgmoon/socket.lua": "8f67d5b804e2310fea923d76f15683bb97b9aa6a73ef60accce72893b79301ed",
+  "pgmoon/util.lua": "c2c0a58b53cd39c7c64354c8e37b107e9245c85dec917620b28333830d741265"
+}

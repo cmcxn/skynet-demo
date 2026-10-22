@@ -39,6 +39,12 @@ RUN make -C /src/skynet-aoi LUA_INC=/src/skynet/3rd/lua PLUTO_DIR=/src/pluto OUT
     mkdir -p /out/tests/aoi /out/licenses/pluto-aoi && \
     cp /src/skynet-aoi/tests/*.lua /out/tests/aoi/ && \
     cp /src/pluto/LICENSE /src/skynet-aoi/README.md /out/licenses/pluto-aoi/
+COPY components/skynet-postgres/ /src/skynet-postgres/
+RUN make -C /src/skynet-postgres LUA_INC=/src/skynet/3rd/lua OUT_DIR=/out/luaclib && \
+    cp -r /src/skynet-postgres/lualib/. /out/lualib/ && \
+    mkdir -p /out/licenses/skynet-postgres && \
+    cp -r /src/skynet-postgres/licenses /out/licenses/skynet-postgres/ && \
+    cp /src/skynet-postgres/LICENSE /src/skynet-postgres/SOURCES.md /src/skynet-postgres/SOURCE-SHA256.json /src/skynet-postgres/README.md /out/licenses/skynet-postgres/
 COPY tests/client-socket.c tests/client-socket.c
 RUN mkdir -p /out/tests/client && \
     gcc -O2 -fPIC -shared -I3rd/lua tests/client-socket.c -o /out/tests/client/socket.so -lpthread

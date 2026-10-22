@@ -1,0 +1,9 @@
+Third-party licenses and notices are in licenses/.
+pgmoon: Copyright (C) 2025 Leaf Corcoran, MIT.
+pgvector-lua: Copyright (c) 2023-2025 Andrew Kane, MIT.
+Native TLS snapshot derives from Skynet and skynet-llm; its MIT notice is retained in source.
+Local imported adapters and sha2.lua came from the user-provided mao repository,
+which did not include a separate license for these files. Their source hashes are
+recorded in SOURCE-SHA256.json; no upstream license is invented for that local code.
+New integration changes in this component are provided under the MIT terms in
+licenses/skynet-MIT.txt, subject to the original source notices above.

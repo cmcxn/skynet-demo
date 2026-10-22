@@ -24,6 +24,9 @@
 !components/
 !components/skynet-llm/
 !components/skynet-llm/**
+!components/skynet-postgres/
+!components/skynet-postgres/**
+components/skynet-postgres/luaclib/
 components/skynet-llm/luaclib/
 
 .local/
