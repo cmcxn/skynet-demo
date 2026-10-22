@@ -6,3 +6,4 @@ components/skynet-llm/luaclib/
 llm-settings.bat
 
 components/skynet-aoi/luaclib/
+/.build/

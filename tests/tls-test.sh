@@ -5,7 +5,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 CC=${CC:-cc}
 mkdir -p "$TMP/skynet/lualib-src" "$TMP/skynet/lualib/http"
-cp "$ROOT/vendor/skynet/lualib-src/ltls.c" "$TMP/skynet/lualib-src/"
+cp "$ROOT/vendor/skynet/lualib-src/ltls.c" "$ROOT/vendor/skynet/lualib-src/lua-skynet.c" "$TMP/skynet/lualib-src/"
 cp "$ROOT/vendor/skynet/lualib/http/"*.lua "$TMP/skynet/lualib/http/"
 if [ "${TLS_TEST_UNPATCHED:-0}" != 1 ]; then
     patch -d "$TMP/skynet" -p1 < "$ROOT/patches/skynet-verified-client-tls.patch"

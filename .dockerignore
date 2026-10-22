@@ -17,6 +17,8 @@
 !tests/config-features
 !tests/features.lua
 !tests/https-check.lua
+!tests/config-proxy
+!tests/proxy-client.lua
 **/.git
 
 !components/
