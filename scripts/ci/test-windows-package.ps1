@@ -27,7 +27,12 @@ function Invoke-Package([string]$Exe, [string]$Arguments, [int]$Seconds = 60) {
     $p = [Diagnostics.Process]::Start($si)
     $stdout = $p.StandardOutput.ReadToEndAsync()
     $stderr = $p.StandardError.ReadToEndAsync()
-    if (-not $p.WaitForExit($Seconds * 1000)) { $p.Kill($true); throw "Timeout: $Exe $Arguments" }
+    if (-not $p.WaitForExit($Seconds * 1000)) {
+        $p.Kill($true); $p.WaitForExit()
+        Write-Host $stdout.Result
+        Write-Host $stderr.Result
+        throw "Timeout: $Exe $Arguments"
+    }
     Write-Host $stdout.Result
     Write-Host $stderr.Result
     if ($p.ExitCode -ne 0) { throw "Exit $($p.ExitCode): $Exe $Arguments" }

@@ -12,5 +12,7 @@ skynet.start(function()
     local f = assert(io.open("ci-service-result.txt", "w"))
     f:write(ok and "PASS" or "FAIL"); f:close()
     if not ok then skynet.error(err) end
-    require("skynet.core").command("ABORT")
+    -- The portable Windows harness uses process exit (see windows/compile.sh).
+    -- Graceful ABORT shutdown is not a supported assertion of this package test.
+    os.exit(ok and 0 or 1)
 end)
