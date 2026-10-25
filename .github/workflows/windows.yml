@@ -1,0 +1,132 @@
+name: Windows portable package
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested Windows x64 ZIP as a separate prerelease
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.policy.outputs.publish }}
+      sha: ${{ steps.policy.outputs.sha }}
+      release: ${{ steps.policy.outputs.release }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: policy
+        name: Check release source
+        env:
+          REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          publish=false
+          release="windows-${sha:0:12}"
+          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            git merge-base --is-ancestor "$sha" "origin/$DEFAULT_BRANCH"
+            version=${GITHUB_REF#refs/tags/}
+            [[ "$version" =~ ^v[A-Za-z0-9_.-]{0,100}$ ]]
+            release="windows-$version"
+            publish=true
+          elif [ "$REQUESTED" = true ]; then
+            test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+            publish=true
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Initialize fixed source revisions
+        run: sh scripts/update-submodules.sh
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build existing MinGW portable package
+        run: bash scripts/build-windows.sh
+      - name: Audit and seal release archive
+        env:
+          GITHUB_SHA: ${{ needs.prepare.outputs.sha }}
+        run: python3 scripts/ci/windows-package.py dist/skynet-windows-x64 --seal
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-x64-package
+          path: |
+            dist/skynet-windows-x64.zip
+            dist/skynet-windows-x64.zip.sha256
+            dist/RELEASE-NOTES.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  native-test:
+    needs: [prepare, build]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: windows-x64-package
+          path: dist
+      - name: Run package on native Windows x64
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ needs.prepare.outputs.sha }}
+        run: ./scripts/ci/test-windows-package.ps1 -Archive dist/skynet-windows-x64.zip -ExpectedSha $env:EXPECTED_SHA
+
+  release:
+    needs: [prepare, native-test]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: windows-x64-package
+          path: package
+      - name: Publish tested ZIP without replacing existing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release }}
+        working-directory: package
+        run: |
+          sha256sum -c skynet-windows-x64.zip.sha256
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to overwrite it or its assets.' >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" --draft --prerelease --latest=false \
+            --title "Windows x64 portable package ($RELEASE_TAG)" --notes-file RELEASE-NOTES.txt \
+            skynet-windows-x64.zip skynet-windows-x64.zip.sha256 RELEASE-NOTES.txt
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          gh release view "$RELEASE_TAG" --json url --jq .url >> "$GITHUB_STEP_SUMMARY"

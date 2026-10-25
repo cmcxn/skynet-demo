@@ -303,3 +303,5 @@ Docker、Windows 便携包和 Linux 原生构建均会安装该组件；不通�
 ## Docker Hub CI
 
 GitHub Actions 双架构构建测试与 Docker Hub 发布配置见 [Docker Hub CI 指南](docs/dockerhub-ci.md)。
+
+Windows ZIP 自动构建、原生验证与 GitHub Release 下载见 [Windows 发布指南](docs/windows-release-ci.md)。
