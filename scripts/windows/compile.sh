@@ -3,7 +3,9 @@ set -euo pipefail
 cd /src/skynet
 CC=x86_64-w64-mingw32-gcc
 COMMON=(-O2 -shared -static-libgcc -I3rd/lua -L3rd/lua)
-"$CC" "${COMMON[@]}" -Iskynet-src -I/opt/openssl/include \
+# OpenSSL 3 owns initialization and cleanup. The legacy ltls destructor frees
+# its global compression stack, which OpenSSL frees again on native Windows exit.
+"$CC" "${COMMON[@]}" -DOPENSSL_EXTERNAL_INITIALIZATION -Iskynet-src -I/opt/openssl/include \
     lualib-src/ltls.c -o luaclib/ltls.so -llua54 \
     /opt/openssl/lib64/libssl.a /opt/openssl/lib64/libcrypto.a \
     -lws2_32 -lcrypt32 -lbcrypt
