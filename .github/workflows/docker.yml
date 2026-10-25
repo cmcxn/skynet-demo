@@ -1,0 +1,158 @@
+name: Docker image
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish tested AMD64 and ARM64 images from the default branch
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      publish: ${{ steps.policy.outputs.publish }}
+      sha: ${{ steps.policy.outputs.sha }}
+      version: ${{ steps.policy.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check trusted publication source
+        id: policy
+        env:
+          REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          publish=false
+          version=
+          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            git merge-base --is-ancestor "$sha" "origin/$DEFAULT_BRANCH"
+            version=${GITHUB_REF#refs/tags/}
+            [[ "$version" =~ ^v[A-Za-z0-9_.-]{0,127}$ ]]
+            publish=true
+          elif [ "$REQUESTED" = true ]; then
+            test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+            publish=true
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      TEST_IMAGE: skynet-demo:ci-${{ matrix.arch }}
+      SKYNET_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Initialize pinned dependencies
+        run: |
+          sh scripts/update-submodules.sh
+          git submodule status --recursive > /tmp/submodules.txt
+          if grep -Eq '^[+U]' /tmp/submodules.txt; then
+            echo 'Unexpected submodule revision' >&2
+            exit 1
+          fi
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build runtime
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.TEST_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
+            org.opencontainers.image.version=sha-${{ needs.prepare.outputs.sha }}
+      - name: Test installed image
+        run: sh scripts/ci-image-check.sh "$TEST_IMAGE"
+      - name: Export tested image
+        if: needs.prepare.outputs.publish == 'true'
+        run: docker save "$TEST_IMAGE" -o "$RUNNER_TEMP/image-$SKYNET_ARCH.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: needs.prepare.outputs.publish == 'true'
+        with:
+          name: image-${{ matrix.arch }}
+          path: ${{ runner.temp }}/image-${{ matrix.arch }}.tar
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE: chenmins/skynet-demo
+      SOURCE_SHA: ${{ needs.prepare.outputs.sha }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Require credentials and public target
+        env:
+          TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          test -n "$TOKEN" || { echo 'Configure the DOCKERHUB_TOKEN Actions secret first.' >&2; exit 1; }
+          curl --fail --silent --show-error https://hub.docker.com/v2/repositories/chenmins/skynet-demo/ | jq -e '.is_private == false and .namespace == "chenmins" and .name == "skynet-demo"' >/dev/null
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: image-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/images
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Load both tested images
+        run: |
+          for arch in amd64 arm64; do
+            docker load -i "$RUNNER_TEMP/images/image-$arch.tar"
+            test "$(docker image inspect --format '{{.Architecture}}' "skynet-demo:ci-$arch")" = "$arch"
+          done
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME || 'chenmins' }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Push tested images and assemble manifest
+        run: |
+          sources=()
+          for arch in amd64 arm64; do
+            tag="$IMAGE:sha-$SOURCE_SHA-$arch"
+            docker tag "skynet-demo:ci-$arch" "$tag"
+            docker push "$tag"
+            digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$tag")
+            sources+=("$digest")
+          done
+          tags=(--tag "$IMAGE:sha-$SOURCE_SHA")
+          if [ -n "$VERSION" ]; then tags+=(--tag "$IMAGE:$VERSION"); fi
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:sha-$SOURCE_SHA" --raw > "$RUNNER_TEMP/manifest.json"
+          jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64","arm64"]' "$RUNNER_TEMP/manifest.json"
+          docker buildx imagetools inspect "$IMAGE:sha-$SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"

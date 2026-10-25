@@ -299,3 +299,7 @@ Docker、Windows 便携包和 Linux 原生构建均会安装该组件；不通�
 [数据库组件 README](components/skynet-postgres/README.md)。在项目根目录执行
 `sh scripts/test-postgres.sh`，运行隔离的临时 PostgreSQL + pgvector 及故障测试，
 不会连接现有业务数据库。
+
+## Docker Hub CI
+
+GitHub Actions 双架构构建测试与 Docker Hub 发布配置见 [Docker Hub CI 指南](docs/dockerhub-ci.md)。

@@ -33,6 +33,11 @@ RUN make -C /src/skynet-llm LUA_INC=/src/skynet/3rd/lua OUT_DIR=/out/luaclib && 
     cp -r /src/skynet-llm/patches /out/licenses/skynet-llm/ && \
     mkdir -p /out/licenses/skynet && cp /src/skynet/LICENSE /out/licenses/skynet/ && \
     cp /tmp/skynet-verified-client-tls.patch /out/licenses/skynet/
+# Preserve notices for bundled native dependencies in distributed images.
+RUN mkdir -p /out/licenses/lua-cjson /out/licenses/jemalloc /out/licenses/lua && \
+    cp /src/lua-cjson/LICENSE /out/licenses/lua-cjson/ && \
+    cp /src/skynet/3rd/jemalloc/COPYING /out/licenses/jemalloc/ && \
+    cp /src/skynet/3rd/lua/lua.h /out/licenses/lua/
 # Only the AOI sources and license are needed from the Pluto repository.
 COPY vendor/pluto/lualib-src/lua-aoi/ /src/pluto/lualib-src/lua-aoi/
 COPY vendor/pluto/LICENSE /src/pluto/LICENSE
