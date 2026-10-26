@@ -9,7 +9,7 @@ skynet.start(function()
         fn(); count = count + 1; print('PASS ' .. label)
     end
     local ok, err = xpcall(function()
-        db = client.new('/workspace/vendor/postgrest-lua')
+        db = client.new()
         test('insert UTF-8 JSON and representation', function()
             local rows = db:from(name):insert{id=id,task='学习 Lua 空格',done=false}:execute()
             assert(#rows==1 and rows[1].id==id)

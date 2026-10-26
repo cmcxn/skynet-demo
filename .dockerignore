@@ -61,3 +61,11 @@ components/skynet-aoi/luaclib/
 vendor/skynet/skynet
 vendor/skynet/3rd/lua/lua
 vendor/skynet/3rd/lua/luac
+
+# PostgREST sources only; secrets in .local remain excluded.
+!vendor/postgrest-lua/
+!vendor/postgrest-lua/postgrest/
+!vendor/postgrest-lua/postgrest/*.lua
+!vendor/postgrest-lua/LICENSE
+!components/skynet-postgrest/
+!components/skynet-postgrest/**

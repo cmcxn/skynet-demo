@@ -34,18 +34,22 @@ def read_config(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('config', type=Path)
+    parser.add_argument('--packaged', action='store_true', help='Use bundled modules/tests without mounting source')
     parser.add_argument('--network', help='Docker network mode, e.g. container:<name>')
     options = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     config = read_config(options.config)
     env = {**os.environ, **config, 'DB_TEST_RUN_ID': str(uuid.uuid4())}
-    args = ['docker', 'run', '--rm', '-v', f'{root}:/workspace:ro', '-w', '/skynet']
+    args = ['docker', 'run', '--rm', '-w', '/skynet']
+    if not options.packaged:
+        args += ['-v', f'{root}:/workspace:ro']
     if options.network:
         args += ['--network', options.network]
     for key in (*config, 'DB_TEST_RUN_ID'):
         args += ['-e', key]
+    test_config = 'tests/postgrest/config' if options.packaged else '/workspace/components/skynet-postgrest/tests/config'
     args += ['--entrypoint', 'sh', os.getenv('POSTGREST_SKYNET_IMAGE', 'skynet-demo:master-64391f7'),
-             '-ec', 'timeout 120 ./skynet /workspace/components/skynet-postgrest/tests/config']
+             '-ec', f'timeout 120 ./skynet {test_config}']
     result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=150)
     output = result.stdout + result.stderr
     if config['DB_REST_TOKEN']:

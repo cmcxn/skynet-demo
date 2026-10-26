@@ -1,0 +1,32 @@
+# Opt-in self-hosted demo. Credentials/config are runtime env files, never image layers.
+services:
+  skynet:
+    env_file:
+      - .local/postgrest-selfhost.env
+    depends_on:
+      postgrest:
+        condition: service_started
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - .local/postgrest-db.env
+    volumes:
+      - postgrest_data:/var/lib/postgresql/data
+      - ./components/skynet-postgrest/tests/init.sql:/docker-entrypoint-initdb.d/postgrest.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  postgrest:
+    image: postgrest/postgrest:v12.2.12
+    env_file:
+      - .local/postgrest-server.env
+    environment:
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: web_anon
+    depends_on:
+      postgres:
+        condition: service_healthy
+volumes:
+  postgrest_data:

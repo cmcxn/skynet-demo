@@ -53,6 +53,16 @@ RUN make -C /src/skynet-postgres LUA_INC=/src/skynet/3rd/lua OUT_DIR=/out/luacli
     mkdir -p /out/licenses/skynet-postgres && \
     cp -r /src/skynet-postgres/licenses /out/licenses/skynet-postgres/ && \
     cp /src/skynet-postgres/LICENSE /src/skynet-postgres/SOURCES.md /src/skynet-postgres/SOURCE-SHA256.json /src/skynet-postgres/README.md /out/licenses/skynet-postgres/
+# Pure Lua PostgREST client and private Skynet HTTP compatibility loader.
+COPY vendor/postgrest-lua/postgrest/ /src/postgrest-lua/postgrest/
+COPY vendor/postgrest-lua/LICENSE /src/postgrest-lua/LICENSE
+COPY components/skynet-postgrest/ /src/skynet-postgrest/
+RUN mkdir -p /out/lualib/postgrest /out/tests/postgrest /out/licenses/postgrest-lua && \
+    cp /src/postgrest-lua/postgrest/database.lua /src/postgrest-lua/postgrest/query_builder.lua /src/postgrest-lua/postgrest/filter_builder.lua /src/postgrest-lua/postgrest/utils.lua /src/postgrest-lua/postgrest/constants.lua /out/lualib/postgrest/ && \
+    cp /src/skynet-postgrest/lualib/*.lua /out/lualib/ && \
+    cp /src/skynet-postgrest/tests/integration.lua /out/tests/postgrest/ && \
+    cp /src/skynet-postgrest/tests/config-docker /out/tests/postgrest/config && \
+    cp /src/postgrest-lua/LICENSE /src/skynet-postgrest/README.md /out/licenses/postgrest-lua/
 COPY tests/client-socket.c tests/client-socket.c
 RUN mkdir -p /out/tests/client && \
     gcc -O2 -fPIC -shared -I3rd/lua tests/client-socket.c -o /out/tests/client/socket.so -lpthread

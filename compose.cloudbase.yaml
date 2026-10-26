@@ -1,0 +1,5 @@
+# Opt-in external CloudBase PG REST; no local database or API container.
+services:
+  skynet:
+    env_file:
+      - .local/postgrest-cloudbase.env

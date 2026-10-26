@@ -33,7 +33,9 @@ function M.load(source)
         if name:sub(1,10) ~= 'postgrest.' then return require(name) end
         if not cache[name] then
             local env = setmetatable({require = upstream}, {__index = _G})
-            cache[name] = assert(loadfile(source .. '/' .. name:gsub('%.','/') .. '.lua', 't', env))()
+            local filename = source and (source .. '/' .. name:gsub('%.','/') .. '.lua')
+                or assert(package.searchpath(name, package.path))
+            cache[name] = assert(loadfile(filename, 't', env))()
         end
         return cache[name]
     end

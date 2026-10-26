@@ -4,7 +4,7 @@ bootstrap = 'snlua bootstrap'
 start = 'integration'
 luaservice = '/workspace/components/skynet-postgrest/tests/?.lua;./service/?.lua'
 lualoader = './lualib/loader.lua'
-lua_path = '/workspace/components/skynet-postgrest/lualib/?.lua;./lualib/?.lua;./lualib/?/init.lua'
+lua_path = '/workspace/vendor/postgrest-lua/?.lua;/workspace/components/skynet-postgrest/lualib/?.lua;./lualib/?.lua;./lualib/?/init.lua'
 lua_cpath = './luaclib/?.so'
 cpath = './cservice/?.so'
 
