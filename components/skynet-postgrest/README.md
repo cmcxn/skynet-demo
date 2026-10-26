@@ -87,4 +87,10 @@ Docker 打包集成前，在 macOS Docker Desktop 上复用 `skynet-demo:master-
 - 保留上游 encodeURI 语义，过滤值中的 `&`、`#` 等保留字符仍可能改变 URL 含义，不应用于不受控输入；生产适配需要按查询参数编码并验证引号与转义规则。
 - 上游 execute 会修改 query_parameters；每次使用新查询对象，避免重复附加过滤串。
 - 上游错误包含原始响应正文；测试入口对已知令牌脱敏，生产使用仍需统一错误脱敏策略。
-- 并发调度、分页、Upsert、RPC、原生 Windows 实机尚未验证。
+- 并发调度、分页、Upsert、原生 Windows 实机尚未验证；pgvector RPC 已通过独立双端测试。
+
+## pgvector
+
+本地 PG16 与 CloudBase 的向量读写及检索 RPC 均通过 11/11；复跑命令和 Lua 示例见 [pgvector 双端验证](../../docs/pgvector-postgrest.md)。
+
+首次使用建议阅读 [pgvector 使用说明书](../../docs/pgvector-manual.md)，测试细节另见双端验证记录。

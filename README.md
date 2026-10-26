@@ -316,3 +316,7 @@ PostgREST 的增删改查。此组件仍是兼容性试验，运行方法及编�
 Docker 镜像已内置 PostgREST 客户端，可选自建 PostgreSQL + PostgREST 或连接 CloudBase；配置与启动命令见 [Docker 使用说明](docs/postgrest-docker.md)。
 
 Windows x64 包也包含 PostgREST 客户端和 `test-postgrest.bat`，使用及 Wine 实测见 [Windows PostgREST 指南](docs/postgrest-windows.md)。
+
+通过 PostgREST 使用 pgvector 的本机与 CloudBase 双端实测、配置和 RPC 示例见 [pgvector 验证指南](docs/pgvector-postgrest.md)。
+
+完整配置、数据库初始化及向量增删改查/RPC 编程说明见 [pgvector 使用说明书](docs/pgvector-manual.md)。
