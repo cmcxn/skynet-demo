@@ -305,3 +305,10 @@ Docker、Windows 便携包和 Linux 原生构建均会安装该组件；不通�
 GitHub Actions 双架构构建测试与 Docker Hub 发布配置见 [Docker Hub CI 指南](docs/dockerhub-ci.md)。
 
 Windows ZIP 自动构建、原生验证与 GitHub Release 下载见 [Windows 发布指南](docs/windows-release-ci.md)。
+
+## PostgREST Lua 本地试验
+
+`vendor/postgrest-lua` 以 Git 子模块固定上游版本，私有 HTTP 兼容层将请求交给
+Skynet `http.httpc`。运行 `sh scripts/test-postgrest.sh` 验证临时 PostgreSQL +
+PostgREST 的增删改查。此组件仍是兼容性试验，运行方法及编码边界见
+[试验说明](components/skynet-postgrest/README.md)，本地与 CloudBase 共用三项配置和同一套 8 组 CRUD 集成测试；配置位置与复跑方法见组件说明。

@@ -8,3 +8,6 @@
 [submodule "vendor/pluto"]
 	path = vendor/pluto
 	url = https://github.com/cloudfreexiao/pluto.git
+[submodule "vendor/postgrest-lua"]
+	path = vendor/postgrest-lua
+	url = https://github.com/AndreMiras/postgrest-lua.git
