@@ -1,6 +1,6 @@
 # postgrest-lua × Skynet
 
-自建 PostgreSQL + PostgREST 与 CloudBase PG REST 共用初始化模块、业务查询代码和一份 CRUD 集成测试，只通过配置切换 URL、令牌和超时。Linux Docker 镜像已包含组件和测试；Windows 包尚未验证。
+自建 PostgreSQL + PostgREST 与 CloudBase PG REST 共用初始化模块、业务查询代码和一份 CRUD 集成测试，只通过配置切换 URL、令牌和超时。Linux Docker 镜像已包含组件和测试；Windows x64 包已接入并通过 Wine 测试，见 [Windows 指南](../../docs/postgrest-windows.md)。
 
 上游 `vendor/postgrest-lua` 为 Git 子模块，固定提交 `8777cac6b2ece5248dbf3157fdc7c45e49efa8c9`，保留原始源码和许可证。`skynet_postgrest.lua` 在私有加载环境中以 Skynet `http.httpc` 代替上游使用的少量 lua-http 接口，不占用全局 `package.loaded['http.request']`。JSON 使用运行镜像中的 cjson。
 
@@ -87,4 +87,4 @@ Docker 打包集成前，在 macOS Docker Desktop 上复用 `skynet-demo:master-
 - 保留上游 encodeURI 语义，过滤值中的 `&`、`#` 等保留字符仍可能改变 URL 含义，不应用于不受控输入；生产适配需要按查询参数编码并验证引号与转义规则。
 - 上游 execute 会修改 query_parameters；每次使用新查询对象，避免重复附加过滤串。
 - 上游错误包含原始响应正文；测试入口对已知令牌脱敏，生产使用仍需统一错误脱敏策略。
-- 并发调度、分页、Upsert、RPC、Windows 尚未验证。
+- 并发调度、分页、Upsert、RPC、原生 Windows 实机尚未验证。

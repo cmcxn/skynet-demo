@@ -82,3 +82,26 @@ Linux 全套 mock 测试通过；Wine 离线 31 协议 + 6 SSE、36 传输、客
 
 Pluto AOI: run test-aoi.bat for offline AOI tests. Business code should require
 "skynet_aoi". See licenses/pluto-aoi/README.md for API and upstream limitations.
+
+POSTGREST (self-hosted or CloudBase PG REST)
+
+Open CMD in the extracted package directory. Copy postgrest-local.example.bat
+or postgrest-cloudbase.example.bat to postgrest-settings.bat and edit its values.
+Run test-postgrest.bat. You do not need start.bat. No Docker is needed on Windows
+when connecting to an existing PostgREST server or CloudBase environment.
+
+Both modes use DB_REST_URL, DB_REST_TOKEN and DB_TIMEOUT_TICKS (3000 = 30s).
+Use a Windows-reachable HTTP address for self-hosted PostgREST; Docker service
+names such as "postgrest" only resolve inside that Docker network.
+The CloudBase URL is https://<envId>.api.tcloudbasegateway.com/v1/rdb/rest.
+Keep the service-role API Key private. Do not ship your edited settings file.
+The ZIP contains only empty/example settings; all credentials are runtime-only.
+
+Prepare skynet_postgrest_test_20261026(id text PRIMARY KEY, task text NOT NULL,
+done boolean NOT NULL DEFAULT false) on the target before testing. Grant the
+caller CRUD access. For CloudBase use the separately documented service_role
+setup; enabling RLS alone does not grant ordinary users access.
+The shared suite runs 8 checks and deletes only its own test ID, keeping the table.
+It uses bundled PEM CA certificates, verifies HTTPS identity and connects directly.
+The script exits 0 only if the service process and all checks succeed.
+Business code: local db = require('skynet_postgrest_client').new()

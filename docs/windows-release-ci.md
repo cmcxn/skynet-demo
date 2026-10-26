@@ -31,3 +31,5 @@
 
 构建器 digest、OpenSSL 3.5.9 源码 SHA256、子模块 gitlink 和 Actions SHA 均固定；APT 包仍来自构建时 Debian 仓库，
 所以相同源码重建不保证 ZIP 位级一致，发布的 SHA256 才标识实际文件。
+
+PostgREST 已纳入便携包和模块加载审计，在线自建/CloudBase CRUD 的 Wine 复跑见 [Windows PostgREST 指南](postgrest-windows.md)。发行包不携带私有 `postgrest-settings.bat` 或真实 API Key。

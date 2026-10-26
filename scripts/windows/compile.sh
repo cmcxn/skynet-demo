@@ -42,6 +42,16 @@ mkdir -p /out/licenses/skynet-postgres
 cp -r /src/skynet-postgres/licenses /out/licenses/skynet-postgres/
 cp /src/skynet-postgres/{LICENSE,SOURCES.md,SOURCE-SHA256.json,README.md} /out/licenses/skynet-postgres/
 
+# Ship the same pure Lua PostgREST client and integration service as Linux.
+mkdir -p /out/lualib/postgrest /out/tests/postgrest /out/licenses/postgrest-lua
+for module in database query_builder filter_builder utils constants; do
+    cp "/src/postgrest-lua/postgrest/$module.lua" /out/lualib/postgrest/
+done
+cp /src/skynet-postgrest/lualib/*.lua /out/lualib/
+cp /src/skynet-postgrest/tests/integration.lua /out/tests/postgrest/
+cp /src/skynet-postgrest/tests/config-docker /out/tests/postgrest/config
+cp /src/postgrest-lua/LICENSE /src/skynet-postgrest/README.md /out/licenses/postgrest-lua/
+
 cp -r /src/skynet-llm/lualib/. /out/lualib/
 cp -r /src/skynet-llm/service/. /out/service/
 mkdir -p /out/certs /out/tests/llm-unit /out/licenses/skynet-llm

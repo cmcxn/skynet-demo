@@ -10,3 +10,5 @@ components/skynet-aoi/luaclib/
 
 components/skynet-postgres/luaclib/
 /.codegraph/
+
+postgrest-settings.bat

@@ -314,3 +314,5 @@ PostgREST 的增删改查。此组件仍是兼容性试验，运行方法及编�
 [试验说明](components/skynet-postgrest/README.md)，本地与 CloudBase 共用三项配置和同一套 8 组 CRUD 集成测试；配置位置与复跑方法见组件说明。
 
 Docker 镜像已内置 PostgREST 客户端，可选自建 PostgreSQL + PostgREST 或连接 CloudBase；配置与启动命令见 [Docker 使用说明](docs/postgrest-docker.md)。
+
+Windows x64 包也包含 PostgREST 客户端和 `test-postgrest.bat`，使用及 Wine 实测见 [Windows PostgREST 指南](docs/postgrest-windows.md)。

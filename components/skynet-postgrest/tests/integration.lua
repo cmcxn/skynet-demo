@@ -48,7 +48,7 @@ skynet.start(function()
         end
         local message = tostring(err)
         if token ~= '' then message = message:gsub(token:gsub('([^%w])','%%%1'),'[redacted]') end
-        skynet.error(message); os.exit(1)
+        io.stderr:write(message, '\n'); io.stderr:flush(); os.exit(1)
     end
     print('PASS: ' .. count .. ' shared PostgREST integration groups')
     os.exit(0)

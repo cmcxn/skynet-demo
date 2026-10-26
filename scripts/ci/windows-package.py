@@ -14,7 +14,7 @@ def audit(root):
             continue
         assert not p.is_symlink(), 'Symlinks are not allowed'
         assert not any(x in {'.git', '.local', '__pycache__'} for x in p.parts)
-        assert p.name not in {'llm-settings.bat', 'id_rsa', 'id_ed25519'}
+        assert p.name not in {'llm-settings.bat', 'postgrest-settings.bat', 'id_rsa', 'id_ed25519'}
         assert p.suffix.lower() not in {'.env', '.key', '.o', '.a', '.pyc'}
         if p.suffix.lower() not in {'.exe', '.dll', '.so'}:
             continue
@@ -47,7 +47,11 @@ def audit(root):
     for name in ['skynet.exe', 'lua.exe', 'lua54.dll', 'skynet.dll', 'start.bat',
                  'certs/ca-bundle.crt', 'licenses/skynet.txt', 'licenses/lua.txt',
                  'licenses/lua-cjson.txt', 'licenses/openssl.txt', 'licenses/pluto-aoi/LICENSE',
-                 'licenses/skynet-llm/LICENSE', 'licenses/skynet-postgres/LICENSE']:
+                 'licenses/skynet-llm/LICENSE', 'licenses/skynet-postgres/LICENSE',
+                 'licenses/postgrest-lua/LICENSE', 'lualib/postgrest/database.lua',
+                 'lualib/skynet_postgrest_client.lua', 'tests/postgrest/config',
+                 'tests/postgrest/integration.lua', 'test-postgrest.bat',
+                 'postgrest-local.example.bat', 'postgrest-cloudbase.example.bat']:
         assert (root/name).is_file(), f'Missing required package file {name}'
     print(f'PASS: {count} Windows x64 PE files, DLL closure, notices and package hygiene')
 
@@ -68,7 +72,7 @@ if __name__ == '__main__':
         notes = ('Skynet portable Windows x64 prerelease\n\nSource: '+sha+'\n'
                  'Extract the entire ZIP. Run start.bat, then client.bat. TCP demo: 8888.\n'
                  'No Docker, MinGW, Lua or OpenSSL installation needed on the destination PC.\n'
-                 'Includes cjson, verified TLS/CA, LLM, AOI and PostgreSQL modules and licenses.\n'
+                 'Includes cjson, verified TLS/CA, LLM, AOI, PostgreSQL and PostgREST modules and licenses.\n'
                  'Native Windows CI checks PE/DLL closure, modules, offline LLM/AOI and TCP start/stop.\n'
                  'No ARM64/32-bit support claim. No real model, external HTTPS or database integration claim.\n'
                  'Unsigned binaries; do not disable Windows security protections.\n'

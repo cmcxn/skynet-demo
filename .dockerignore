@@ -69,3 +69,5 @@ vendor/skynet/3rd/lua/luac
 !vendor/postgrest-lua/LICENSE
 !components/skynet-postgrest/
 !components/skynet-postgrest/**
+
+**/postgrest-settings.bat
