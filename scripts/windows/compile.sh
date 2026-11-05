@@ -38,6 +38,12 @@ cp /src/pluto/LICENSE /src/skynet-aoi/README.md /out/licenses/pluto-aoi/
     /src/skynet-postgres/lualib-src/skynet_postgres_native.c -o /out/luaclib/skynet_postgres_native.so -llua54 \
     /opt/openssl/lib64/libssl.a /opt/openssl/lib64/libcrypto.a -lws2_32 -lcrypt32 -lbcrypt -liphlpapi
 cp -r /src/skynet-postgres/lualib/. /out/lualib/
+# Only deterministic offline PostgreSQL tests belong in the portable package.
+# Do not copy integration configs, fixtures, database passwords or test certs.
+mkdir -p /out/tests/postgres
+for unit in unit protocol-regressions transactions; do
+    cp "/src/skynet-postgres/tests/$unit.lua" /out/tests/postgres/
+done
 mkdir -p /out/licenses/skynet-postgres
 cp -r /src/skynet-postgres/licenses /out/licenses/skynet-postgres/
 cp /src/skynet-postgres/{LICENSE,SOURCES.md,SOURCE-SHA256.json,README.md} /out/licenses/skynet-postgres/

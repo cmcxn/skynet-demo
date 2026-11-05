@@ -64,7 +64,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 50
     env:
       TEST_IMAGE: skynet-demo:ci-${{ matrix.arch }}
       SKYNET_ARCH: ${{ matrix.arch }}
@@ -72,6 +72,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Check PostgreSQL CI contracts
+        run: |
+          python3 tests/test-postgres-ci.py
+          python3 tests/test-windows-postgres-package.py
       - name: Initialize pinned dependencies
         run: |
           sh scripts/update-submodules.sh
@@ -96,6 +100,11 @@ jobs:
             org.opencontainers.image.version=sha-${{ needs.prepare.outputs.sha }}
       - name: Test installed image
         run: sh scripts/ci-image-check.sh "$TEST_IMAGE"
+      - name: Test PostgreSQL and transactions
+        env:
+          PG_SKIP_BUILD: "1"
+          PG_TEST_IMAGE: ${{ env.TEST_IMAGE }}
+        run: sh scripts/test-postgres.sh
       - name: Export tested image
         if: needs.prepare.outputs.publish == 'true'
         run: docker save "$TEST_IMAGE" -o "$RUNNER_TEMP/image-$SKYNET_ARCH.tar"

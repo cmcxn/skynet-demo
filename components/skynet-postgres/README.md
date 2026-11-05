@@ -363,3 +363,37 @@ pgvector 0.8.1 上通过 **52 组真实集成、27 组协议回归、19 组事�
 退休和超大超时值均已补失败回归并修复。Lua 语法、shell 语法与 diff 检查通过。
 本环境没有 Docker，标准 `scripts/test-postgres.sh` 因 `docker: not found` 无法启动；
 未重跑 Docker、Windows/Wine 或 Windows 实机。无自动重试、PR、合并或部署。
+
+
+## CI 中的 PostgreSQL 门禁
+
+Docker 工作流在 AMD64、ARM64 各自构建后，先检查镜像内 `pgmoon.db` 的加载与
+`new` 入口，再以 `PG_SKIP_BUILD=1` 对**同一个刚构建的镜像**运行
+`scripts/test-postgres.sh`，通过后才可导出供发布使用的镜像。测试失败不跳过。
+
+Windows 工作流先构建便携包，然后在固定版本 Wine 测试镜像中，用该包的 Windows
+Lua/Skynet 程序连接隔离的临时 PostgreSQL + pgvector。成功后才审计并封装 ZIP。
+随后 native-test 使用 ZIP 内的 Lua 运行 `tests/postgres/` 下的原生单元测试、协议
+回归和事务状态机，并在 Windows Skynet 服务内显式加载 `pgmoon.db`。
+这里的真实数据库 Windows 二进制验证在 Wine 中执行，不等同于 Windows 实机数据库集成。
+
+包审计明确要求事务模块、完整 pgmoon 依赖、`skynet.queue`、pgvector、sha2、原生
+PostgreSQL 模块和三份离线测试。只把 `unit.lua`、`protocol-regressions.lua`、
+`transactions.lua` 放入 ZIP 的 `tests/postgres/`，不携带数据库集成配置、测试证书、
+密码或数据库夹具。临时数据库和 Wine prefix 不进入分发包。
+
+以下检查不需要 Docker，可直接在仓库根目录运行；它们检查配置/打包门禁，不能代替
+真正执行 Docker、Wine 或原生 Windows 作业：
+
+```sh
+python3 tests/test-postgres-ci.py
+python3 tests/test-windows-postgres-package.py
+```
+
+2026-11-05 本地补充验证通过 6 组 CI 配置契约、3 组合成包审计（逐项覆盖 16 个必要
+文件缺失和 6 种禁止夹具/配置路径）、Linux 真实服务加载及缺失事务模块的负向门禁。
+先前原生运行时通过 52 组真实 PostgreSQL 集成，临时数据库已停止并删除；工作区
+恢复后重新编译 Lua 5.5.1 和原生模块，重跑 27 组协议、19 组事务状态机及原生单测。
+本地环境没有 Docker、Wine、PowerShell 或 Windows，完整跨平台结果以 GitHub Actions
+对应提交的实际运行结果为准。现有触发条件、发布条件与权限未改变；这些修改本身
+不授权发布 Docker Hub 镜像、Windows Release 或部署。

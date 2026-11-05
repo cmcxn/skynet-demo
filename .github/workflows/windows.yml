@@ -57,16 +57,29 @@ jobs:
   build:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Check PostgreSQL CI contracts
+        run: |
+          python3 tests/test-postgres-ci.py
+          python3 tests/test-windows-postgres-package.py
       - name: Initialize fixed source revisions
         run: sh scripts/update-submodules.sh
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Build existing MinGW portable package
         run: bash scripts/build-windows.sh
+      - name: Build pinned Wine test environment
+        run: docker build --platform linux/amd64 -f Dockerfile.wine -t skynet-wine-test:ci .
+      - name: Test packaged PostgreSQL with Wine
+        env:
+          SKYNET_PLATFORM: linux/amd64
+          PG_TEST_IMAGE: skynet-postgres-demo:ci-windows-check
+          PG_WINDOWS_RUNTIME: ${{ github.workspace }}/dist/skynet-windows-x64
+          PG_WINE_IMAGE: skynet-wine-test:ci
+        run: sh scripts/test-postgres.sh
       - name: Audit and seal release archive
         env:
           GITHUB_SHA: ${{ needs.prepare.outputs.sha }}

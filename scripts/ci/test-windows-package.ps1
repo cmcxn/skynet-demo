@@ -44,6 +44,10 @@ Invoke-Package 'tests/udp-errno.exe' ''
 Invoke-Package 'lua.exe' 'tests/llm-unit/protocol.lua'
 Invoke-Package 'lua.exe' 'tests/llm-unit/sse.lua'
 Invoke-Package 'lua.exe' 'tests/aoi/unit.lua'
+# Fresh processes keep the protocol/transaction mocks isolated from native crypto.
+Invoke-Package 'lua.exe' 'tests/postgres/unit.lua'
+Invoke-Package 'lua.exe' 'tests/postgres/protocol-regressions.lua'
+Invoke-Package 'lua.exe' 'tests/postgres/transactions.lua'
 Invoke-Package 'skynet.exe' 'tests\windows-config'
 if ((Get-Content "$root/ci-service-result.txt") -ne 'PASS') { throw 'Service module check failed' }
 # Test the shipped demo twice. Each stop must release the TCP listener before restart.

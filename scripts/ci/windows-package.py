@@ -6,6 +6,8 @@ SYSTEM_DLLS = {'iphlpapi.dll', 'kernel32.dll', 'msvcrt.dll', 'user32.dll', 'gdi3
               'ws2_32.dll', 'advapi32.dll', 'crypt32.dll', 'bcrypt.dll', 'ntdll.dll',
               'secur32.dll', 'shell32.dll', 'ole32.dll', 'ucrtbase.dll'}
 
+POSTGRES_TEST_FILES = {'unit.lua', 'protocol-regressions.lua', 'transactions.lua'}
+
 def audit(root):
     available = {p.name.lower() for p in root.glob('*.dll')}
     count = 0
@@ -14,8 +16,12 @@ def audit(root):
             continue
         assert not p.is_symlink(), 'Symlinks are not allowed'
         assert not any(x in {'.git', '.local', '__pycache__'} for x in p.parts)
-        assert p.name not in {'llm-settings.bat', 'postgrest-settings.bat', 'id_rsa', 'id_ed25519'}
+        assert p.name not in {'llm-settings.bat', 'postgrest-settings.bat', 'postgres-settings.bat', 'id_rsa', 'id_ed25519'}
         assert p.suffix.lower() not in {'.env', '.key', '.o', '.a', '.pyc'}
+        relative = p.relative_to(root)
+        if relative.parts[:2] == ('tests', 'postgres'):
+            assert len(relative.parts) == 3 and p.name in POSTGRES_TEST_FILES, (
+                f'Only offline PostgreSQL tests may be shipped: {relative}')
         if p.suffix.lower() not in {'.exe', '.dll', '.so'}:
             continue
         b = p.read_bytes()
@@ -51,7 +57,14 @@ def audit(root):
                  'licenses/postgrest-lua/LICENSE', 'lualib/postgrest/database.lua',
                  'lualib/skynet_postgrest_client.lua', 'tests/postgrest/config',
                  'tests/postgrest/integration.lua', 'test-postgrest.bat',
-                 'postgrest-local.example.bat', 'postgrest-cloudbase.example.bat']:
+                 'postgrest-local.example.bat', 'postgrest-cloudbase.example.bat',
+                 'lualib/pgmoon/init.lua', 'lualib/pgmoon/db.lua',
+                 'lualib/pgmoon/socket.lua', 'lualib/pgmoon/arrays.lua',
+                 'lualib/pgmoon/hstore.lua', 'lualib/pgmoon/crypto.lua',
+                 'lualib/pgmoon/json.lua', 'lualib/pgmoon/util.lua',
+                 'lualib/skynet/queue.lua', 'lualib/pgmoon/bit.lua', 'lualib/pgvector.lua', 'lualib/sha2.lua',
+                 'luaclib/skynet_postgres_native.so',
+                 *('tests/postgres/' + name for name in sorted(POSTGRES_TEST_FILES))]:
         assert (root/name).is_file(), f'Missing required package file {name}'
     print(f'PASS: {count} Windows x64 PE files, DLL closure, notices and package hygiene')
 
@@ -73,8 +86,9 @@ if __name__ == '__main__':
                  'Extract the entire ZIP. Run start.bat, then client.bat. TCP demo: 8888.\n'
                  'No Docker, MinGW, Lua or OpenSSL installation needed on the destination PC.\n'
                  'Includes cjson, verified TLS/CA, LLM, AOI, PostgreSQL and PostgREST modules and licenses.\n'
-                 'Native Windows CI checks PE/DLL closure, modules, offline LLM/AOI and TCP start/stop.\n'
-                 'No ARM64/32-bit support claim. No real model, external HTTPS or database integration claim.\n'
+                 'Native Windows CI checks PE/DLL closure, modules, offline LLM/AOI/PostgreSQL and TCP start/stop.\n'
+                 'Workflow gates include live PostgreSQL/pgvector tests under Wine before archive sealing.\n'
+                 'No native Windows database integration, ARM64/32-bit, real model or external HTTPS claim.\n'
                  'Unsigned binaries; do not disable Windows security protections.\n'
                  'The example is an in-memory demonstration, not a production deployment.\n'
                  'Keep any personal llm-settings.bat private. Read README.txt for ports and test options.\n')
