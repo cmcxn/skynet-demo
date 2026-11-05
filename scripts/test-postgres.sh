@@ -48,6 +48,7 @@ docker run --platform "$SKYNET_PLATFORM" --rm --user 0 --network "$TAG" -v "$ROO
   -w /skynet -e "PG_TEST_HOST=$DB_HOST" -e "PG_FAULT_HOST=$FAULT_HOST" --entrypoint sh "$IMAGE" -ec '
   export LUA_PATH="./lualib/?.lua;./lualib/?/init.lua;;"
   export LUA_CPATH="./luaclib/?.so;;"
+  ./3rd/lua/lua /workspace/components/skynet-postgres/tests/protocol-regressions.lua
   ./3rd/lua/lua /workspace/components/skynet-postgres/tests/unit.lua
   timeout 90 ./skynet /workspace/components/skynet-postgres/tests/config
 '
@@ -56,6 +57,7 @@ if [ -n "${PG_NATIVE_RUNTIME:-}" ]; then
     -v "$ROOT:/workspace:ro" -v "$RUN_DIR:/fixtures:ro" -w /skynet \
     -e "PG_TEST_HOST=$DB_HOST" -e "PG_FAULT_HOST=$FAULT_HOST" --entrypoint sh "$TOOLS" -ec '
       export LUA_PATH="./lualib/?.lua;./lualib/?/init.lua;;" LUA_CPATH="./luaclib/?.so;;"
+      ./3rd/lua/lua /workspace/components/skynet-postgres/tests/protocol-regressions.lua
       ./3rd/lua/lua /workspace/components/skynet-postgres/tests/unit.lua
       timeout 90 ./skynet /workspace/components/skynet-postgres/tests/config
     '
@@ -72,6 +74,7 @@ if [ -n "${PG_WINDOWS_RUNTIME:-}" ]; then
     --entrypoint sh "$WINE_IMAGE" -ec '
       timeout 90 /usr/lib/wine/wine64 wineboot -u
       export LUA_PATH="./lualib/?.lua;./lualib/?/init.lua;;" LUA_CPATH="./luaclib/?.so;;"
+      timeout 90 /usr/lib/wine/wine64 /portable/lua.exe /postgres-tests/protocol-regressions.lua
       timeout 90 /usr/lib/wine/wine64 /portable/lua.exe /postgres-tests/unit.lua
       timeout 150 /usr/lib/wine/wine64 /portable/skynet.exe "\\postgres-tests\\config-windows"
       timeout 60 /usr/lib/wine/wineserver -w

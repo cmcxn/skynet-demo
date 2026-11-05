@@ -154,6 +154,19 @@ end
 这里的超时按每次 `query` 计算，不是整个事务的总预算。数据库还可配置
 `statement_timeout`、`idle_in_transaction_session_timeout` 等服务端约束。
 
+连接的 `connection is busy` 保护只覆盖一次操作，不会将 BEGIN 后的连接绑定到某个
+协程。两个查询之间，其他协程仍可在同一连接上执行 SQL，写入会加入尚未结束的事务，
+并随它一起提交或回滚。因此，使用该连接的**所有调用**都必须通过同一个队列，
+不能只给事务入口加锁。集成测试同时验证这种未保护的交错行为，以及共用队列后
+第二个协程等待事务结束、独立写入不受前一事务回滚影响的行为。
+
+本组件是连接驱动，不提供旧 PoC 的 pool/worker RPC 或 `transaction(statements)`
+接口。`pgmoon.Postgres.NULL` 是本 Lua 状态内的表身份，复制或通过 RPC 序列化后的
+普通表不是同一个值，会被拒绝为不支持的参数类型。跨服务封装应在接收端恢复 NULL，
+或传递 nil 并显式保存参数数量；展开参数表时使用 `table.unpack(params, 1, params.n)`，
+不能依赖 `#params` 保存尾部 nil。直接调用 `pg:query(sql, value, nil, nil)` 会保留
+这两个 NULL 参数。
+
 ## pgvector
 
 数据库管理员先安装服务器端 pgvector 扩展，并在目标数据库执行
@@ -199,6 +212,18 @@ sh scripts/test-postgres.sh
 不映射数据库端口，不连接现有业务数据库；退出后删除测试容器、网络和证书。
 需要 Docker、可用网络（首次拉取镜像）和足够的镜像构建空间。
 
+脚本还运行 `tests/protocol-regressions.lua` 中的 7 组协议回归。它使用实际驱动源码和
+内存 socket，不依赖数据库、Skynet 进程或原生模块，可用 Lua 5.5 单独运行：
+
+```sh
+LUA_PATH='components/skynet-postgres/lualib/?.lua;components/skynet-postgres/lualib/?/init.lua;;' \
+  lua components/skynet-postgres/tests/protocol-regressions.lua
+```
+
+真实数据库回归额外覆盖服务端错误包含 `read timeout` 时连接仍可复用、尾部 nil/NULL
+参数、复制 NULL 标记的明确拒绝、COMMIT 时延迟外键约束失败，以及上述跨协程事务边界。
+服务端明确返回的 COMMIT 错误不等同于网络断开造成的提交结果未知。
+
 复用已构建镜像可设置 `PG_SKIP_BUILD=1 PG_TEST_IMAGE=your-image`；测试工具单独使用
 `components/skynet-postgres/tests/Dockerfile.tools`，可通过 `PG_TEST_TOOLS_IMAGE` 替换，
 复用时加 `PG_SKIP_TOOLS_BUILD=1`。`PG_DB_TEST_IMAGE` 可替换数据库镜像，需包含 pgvector。
@@ -218,3 +243,11 @@ Windows 测试默认复用项目 Wine 10 镜像，prefix 保存在 `.local/postg
 真实数据库集成用例，覆盖 SCRAM、证书拒绝、DNS、参数化 SQL、NULL/JSON/数组/bytea、
 事务、三种向量、通知等待、并发与重入拒绝、超时重连及畸形协议。加密已通过标准
 向量测试；现有 HTTP 代理 49/49、TLS/WSS、CA 门禁、LLM mock 和 TCP Demo 回归通过。
+
+2026-11-05 防回归验证：当前固定子模块和补丁构建的 Linux 原生运行时，在独立
+PostgreSQL 16.11 + pgvector 0.8.1 上通过全部 38 组集成用例、7 组协议回归和原生
+加密/编解码单元测试。临时注入错误文本误丢连接、尾部 nil 丢失、错误结果未知标记、
+移除共享队列四种变更，均触发对应测试失败；测试后恢复原源码并重新通过。
+本次环境没有 autoconf，构建使用 `NOUSE_JEMALLOC`/系统 malloc；没有可查询的
+ca-certificates 包记录，因此仅关闭包版本检查，实际 CA 证书链的 12 条回归仍通过。
+本次没有重跑 Docker、Windows/Wine 或 Windows 实机验证。
