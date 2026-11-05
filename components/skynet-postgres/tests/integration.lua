@@ -70,6 +70,8 @@ skynet.start(function()
       local p=connect{ssl=false}; assert(not p.sock.session);eq(query(p,'SELECT 7 AS n')[1].n,7);p:disconnect()
     end)
     local p=connect()
+    -- Every run starts from a fresh database, including the earlier facade vector checks.
+    query(p,'CREATE EXTENSION IF NOT EXISTS vector')
     test('parameterized SQL and NULL preserve values',function()
       local attack="x'; DROP TABLE absent; --"
       local r=query(p,'SELECT $1::text AS text, $2::int AS n, $3::boolean AS b, $4::text AS missing',attack,17,true,pgmoon.Postgres.NULL)[1]
@@ -376,7 +378,7 @@ skynet.start(function()
       eq(query(db,'SELECT count(*)::int AS n FROM facade_error_object')[1].n,0);db:disconnect()
     end)
     test('pgvector dense/half/sparse parameters and nearest query',function()
-      query(p,'CREATE EXTENSION IF NOT EXISTS vector');vector.setup_vector(p)
+      vector.setup_vector(p)
       query(p,'CREATE TEMP TABLE component_vectors (id int, embedding vector(3))')
       query(p,'INSERT INTO component_vectors VALUES ($1,$2),($3,$4)',1,vector.new{1,0,0},2,vector.new{0,1,0})
       local r=query(p,'SELECT id, embedding FROM component_vectors ORDER BY embedding <-> $1 LIMIT 1',vector.new{0.9,0.1,0})[1]

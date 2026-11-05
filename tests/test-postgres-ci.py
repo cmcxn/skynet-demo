@@ -73,6 +73,11 @@ class PostgresCI(unittest.TestCase):
         self.assertIn('trap cleanup EXIT HUP INT TERM', text)
         self.assertIn('docker network rm', text)
 
+    def test_fresh_database_enables_vector_before_any_vector_query(self):
+        text = read('components/skynet-postgres/tests/integration.lua')
+        self.assertLess(text.index('CREATE EXTENSION IF NOT EXISTS vector'),
+                        text.index('::vector'))
+
     def test_publication_remains_explicitly_gated(self):
         docker = read('.github/workflows/docker.yml')
         windows = read('.github/workflows/windows.yml')
