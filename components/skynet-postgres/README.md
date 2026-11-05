@@ -340,7 +340,8 @@ PG_SKIP_BUILD=1 PG_WINDOWS_RUNTIME=/absolute/path/to/windows-package sh scripts/
 PG_SKIP_BUILD=1 PG_NATIVE_RUNTIME=/absolute/path/to/native-runtime sh scripts/test-postgres.sh
 ```
 
-Windows 测试默认复用项目 Wine 10 镜像，prefix 保存在 `.local/postgres-wineprefix/`。
+Windows 测试默认复用项目 Wine 10 镜像。每次在一次性容器内创建 Wine prefix，
+由容器当前用户拥有，随容器退出删除，不复用宿主目录。
 两类附加测试都运行同一组真实数据库用例。Wine 通过不代表已完成 Windows 实机验证。
 
 

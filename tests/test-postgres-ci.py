@@ -78,6 +78,14 @@ class PostgresCI(unittest.TestCase):
         self.assertLess(text.index('CREATE EXTENSION IF NOT EXISTS vector'),
                         text.index('::vector'))
 
+    def test_wine_prefix_is_private_to_disposable_container(self):
+        text = read('scripts/test-postgres.sh')
+        wine = text.split('if [ -n "${PG_WINDOWS_RUNTIME:-}" ]; then', 1)[1]
+        self.assertIn('docker run --rm', wine)
+        self.assertIn('-e WINEPREFIX=/wineprefix', wine)
+        self.assertNotIn(':/wineprefix', wine)
+        self.assertNotIn('postgres-wineprefix', wine)
+
     def test_publication_remains_explicitly_gated(self):
         docker = read('.github/workflows/docker.yml')
         windows = read('.github/workflows/windows.yml')

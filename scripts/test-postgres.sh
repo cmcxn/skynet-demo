@@ -66,11 +66,11 @@ if [ -n "${PG_NATIVE_RUNTIME:-}" ]; then
 fi
 if [ -n "${PG_WINDOWS_RUNTIME:-}" ]; then
   WINE_IMAGE=${PG_WINE_IMAGE:-skynet-wine-test:10.0-amd64}
-  mkdir -p "$ROOT/.local/postgres-wineprefix"
+  # Let Wine create a private prefix owned by its container user; --rm cleans it up.
   docker run --rm --platform linux/amd64 --network "$TAG" \
     -v "$PG_WINDOWS_RUNTIME:/portable:ro" \
     -v "$ROOT/components/skynet-postgres/tests:/postgres-tests:ro" \
-    -v "$RUN_DIR:/fixtures:ro" -v "$ROOT/.local/postgres-wineprefix:/wineprefix" \
+    -v "$RUN_DIR:/fixtures:ro" \
     -w /portable -e XDG_RUNTIME_DIR=/tmp -e WINEPREFIX=/wineprefix -e WINEDEBUG=-all \
     -e "PG_TEST_HOST=$DB_HOST" -e "PG_FAULT_HOST=$FAULT_HOST" \
     --entrypoint sh "$WINE_IMAGE" -ec '
