@@ -668,6 +668,12 @@ do
           row_desc = msg
         elseif MSG_TYPE_B.error == _exp_0 then
           err_msg = msg
+          local metadata = self._query_metadata
+          if metadata then
+            local _, fields = self:parse_error(msg)
+            metadata.sqlstate = fields.code
+            metadata.failure_source = 'server'
+          end
         elseif MSG_TYPE_B.notice == _exp_0 then
           if not (notices) then
             notices = { }
@@ -675,6 +681,11 @@ do
           insert(notices, (self:parse_error(msg)))
         elseif MSG_TYPE_B.command_complete == _exp_0 then
           command_complete = msg
+          local metadata = self._query_metadata
+          if metadata then
+            metadata.command_tag = msg:sub(1, -2)
+            insert(metadata.command_tags, metadata.command_tag)
+          end
           local next_result = self:format_query_result(row_desc, data_rows, command_complete)
           num_queries = num_queries + 1
           if num_queries == 1 then
@@ -689,6 +700,10 @@ do
           end
           row_desc, data_rows, command_complete = nil
         elseif MSG_TYPE_B.ready_for_query == _exp_0 then
+          if msg ~= 'I' and msg ~= 'T' and msg ~= 'E' then
+            error('invalid PostgreSQL ReadyForQuery status', 0)
+          end
+          if self._query_metadata then self._query_metadata.ready_for_query = msg end
           break
         elseif MSG_TYPE_B.notification == _exp_0 then
           if not (notifications) then
@@ -979,6 +994,7 @@ do
         end
         data = _accum_0
       end
+      if self._query_metadata then self._query_metadata.send_attempted = true end
       return self.sock:send(data)
     end,
     send_message = function(self, t, data, len)
@@ -986,6 +1002,7 @@ do
         len = _len(data)
       end
       len = len + 4
+      if self._query_metadata then self._query_metadata.send_attempted = true end
       return self.sock:send({
         t,
         self:encode_int(len),
@@ -1128,8 +1145,36 @@ end
 for _, name in ipairs({'query', 'simple_query', 'extended_query', 'wait_for_notification'}) do
   local implementation = base[name]
   base[name] = function(self, ...)
-    if not self._connected or not self.sock.fd then return nil, "PostgreSQL is not connected" end
-    return self.sock:run(implementation, self, ...)
+    if name == 'wait_for_notification' then
+      if not self._connected or not self.sock.fd then return nil, "PostgreSQL is not connected" end
+      return self.sock:run(implementation, self, ...)
+    end
+    -- Per-call metadata never aliases another caller, even on busy rejection.
+    -- Slots 1..6 retain upstream pgmoon's success/error layouts; metadata is
+    -- always slot 7. A server rejection remains definitive if draining fails.
+    local metadata = {command_tags={}, send_attempted=false}
+    local rejection
+    if not self._connected or not self.sock.fd then rejection = "PostgreSQL is not connected"
+    elseif self.sock.operation then rejection = "PostgreSQL connection is busy" end
+    if rejection then
+      metadata.failure_source = 'client'
+      metadata.connection_usable = not not (self._connected and self.sock.fd)
+      return nil, rejection, nil, nil, nil, nil, metadata
+    end
+    self._query_metadata = metadata
+    local result = table.pack(self.sock:run(implementation, self, ...))
+    self._query_metadata = nil
+    if result[7] and result[7].failure_source then
+      local source = result[7].failure_source
+      if source == 'client' and metadata.send_attempted then source = 'protocol' end
+      if metadata.failure_source == 'server' then metadata.transport_failure_source = source
+      else metadata.failure_source = source end
+    elseif result[1] == nil and result[2] and not metadata.failure_source then
+      metadata.failure_source = 'client'
+    end
+    metadata.connection_usable = not not (self._connected and self.sock.fd)
+    result[7] = metadata
+    return table.unpack(result, 1, 7)
   end
 end
 function base:disconnect()

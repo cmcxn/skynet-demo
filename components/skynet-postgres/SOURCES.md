@@ -21,3 +21,7 @@ No game services, private configurations, credentials or data are imported.
 Local changes: verified TLS by default with no opportunistic downgrade; real
 operation deadlines; resource cleanup and concurrent-use rejection; Windows
 OpenSSL RNG and native system DNS discovery; strict SCRAM nonce/iteration bounds; transport frame limits.
+
+2026-11-05 additions: backward-compatible structured query metadata and the local
+`pgmoon.db` managed-transaction facade, maintained by this repository rather than
+claimed as upstream pgmoon code. Original imported hashes remain unchanged.

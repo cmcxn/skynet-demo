@@ -6,6 +6,15 @@ local dns = require 'skynet.dns'
 local flatten = require('pgmoon.util').flatten
 local native = require 'skynet_postgres_native'
 local methods = {}
+-- Typed failures cross the operation boundary without inspecting error wording.
+local function describe(value)
+  local ok,text=pcall(tostring,value)
+  return ok and text or 'error value could not be formatted'
+end
+local failure_mt = {__tostring=function(e) return e.message end}
+local function failure(source, message)
+  return setmetatable({failure_source=source, message=describe(message)}, failure_mt)
+end
 local dns_initialized = false
 local function initialize_dns()
   if dns_initialized then return end
@@ -24,8 +33,8 @@ local function initialize_dns()
 end
 
 function methods:settimeout(ms)
-  assert(type(ms) == 'number' and ms > 0 and ms < math.huge and ms % 1 == 0,
-    'timeout must be a positive integer in milliseconds')
+  assert(type(ms) == 'number' and ms > 0 and ms <= 2147483647 and ms % 1 == 0,
+    'timeout must be an integer from 1 to 2147483647 milliseconds')
   assert(not self.operation, 'cannot change timeout during an operation')
   self.timeout = ms
   return true
@@ -45,7 +54,7 @@ end
 
 function methods:check()
   local op = self.operation
-  if op and (op.expired or skynet.now() >= op.deadline) then error('PostgreSQL operation timeout', 0) end
+  if op and (op.expired or skynet.now() >= op.deadline) then error(failure('timeout', 'PostgreSQL operation timeout'), 0) end
 end
 
 function methods:run(fn, ...)
@@ -64,7 +73,11 @@ function methods:run(fn, ...)
   self.operation = nil
   if not result[1] or expired then
     pcall(self.close, self)
-    return nil, expired and 'PostgreSQL operation timeout' or tostring(result[2])
+    local cause = result[2]
+    local source = expired and 'timeout' or
+      (getmetatable(cause) == failure_mt and cause.failure_source or 'client')
+    return nil, expired and 'PostgreSQL operation timeout' or describe(cause),
+      nil, nil, nil, nil, {failure_source=source}
   end
   return table.unpack(result, 2, result.n)
 end
@@ -156,8 +169,9 @@ function methods:send(data)
   return #data
 end
 function methods:receive(n)
-  assert(type(n)=='number' and n>=0 and n%1==0 and n <= (self.config.max_message_bytes or 16777216),
-    'invalid PostgreSQL message size')
+  if not (type(n)=='number' and n>=0 and n%1==0 and n <= (self.config.max_message_bytes or 16777216)) then
+    error(failure('protocol', 'invalid PostgreSQL message size'), 0)
+  end
   if n == 0 then return '' end
   if not self.session then return self:_raw_read(n) end
   while #self.buffer < n do
@@ -171,6 +185,20 @@ function methods:receive(n)
   local result = self.buffer:sub(1,n)
   self.buffer = self.buffer:sub(n+1)
   return result
+end
+-- Any exception originating in socket I/O is transport, unless already typed
+-- (notably the operation deadline and wire frame bounds).
+for _, name in ipairs({'send', 'receive'}) do
+  local implementation = methods[name]
+  methods[name] = function(self, ...)
+    local result = table.pack(pcall(implementation, self, ...))
+    if not result[1] then
+      local err = result[2]
+      if getmetatable(err) ~= failure_mt then err = failure('transport', err) end
+      error(err, 0)
+    end
+    return table.unpack(result, 2, result.n)
+  end
 end
 function methods:getreusedtimes() return 0 end
 function methods:setkeepalive() return nil, 'use an application-owned connection; no nginx pool' end

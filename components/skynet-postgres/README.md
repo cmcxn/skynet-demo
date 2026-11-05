@@ -110,7 +110,7 @@ Skynet 的 `dns.server()` 不会立即重连已经打开的 DNS UDP socket；如
 
 ## 超时、错误与并发
 
-`timeout` 和 `pg:settimeout(ms)` 单位均为毫秒，必须为正整数，默认 30000。
+`timeout` 和 `pg:settimeout(ms)` 单位均为毫秒，必须为 1–2147483647 的整数，默认 30000。
 预算分别覆盖整个连接流程（DNS、TCP、TLS、认证）或一次完整查询/通知等待，
 不是每读一个数据包就重新计时。Skynet 定时精度约为 10 毫秒，不是硬实时保证。
 DNS 使用 Skynet 异步解析；调用方超时后立即返回，共享解析器自身的在途查询可继续结束。
@@ -127,45 +127,145 @@ DNS 使用 Skynet 异步解析；调用方超时后立即返回，共享解析�
 不要修改 `pg.sock` 或直接调用底层协议读写方法。
 单帧默认最多 16 MiB，可通过正整数 `max_message_bytes` 调整；它不是整个结果集上限。
 
-## 事务
+## 事务封装（推荐）
 
-BEGIN 到 COMMIT/ROLLBACK 必须在同一个连接上，且整个事务由业务队列串行保护：
+`require "pgmoon.db"` 提供应用持有的单连接封装。连接只保存在闭包内，不暴露
+`pg`、`sock`、原始查询入口或可替换的队列。`connect`、普通 `query`、整个
+`transaction` 和 `disconnect` 共用一个 `skynet.queue`；事务持锁直到提交/回滚及
+连接清理结束。它不是连接池，不做自动重连、自动重试或 RPC 分发。
 
 ```lua
-local queue = require "skynet.queue"
-local serial = queue() -- 在服务初始化时建立，所有使用该连接的调用共用它
+local database = require "pgmoon.db"
+local db = database.new {
+    host = assert(os.getenv("PGHOST")),
+    database = assert(os.getenv("PGDATABASE")),
+    user = assert(os.getenv("PGUSER")),
+    password = assert(os.getenv("PGPASSWORD")),
+    ssl = true,
+    cafile = os.getenv("PGSSLROOTCERT"),
+    timeout = 5000,
+}
+assert(db:connect())
 
-local function update_score(pg, player_id, score)
-    return serial(function()
-        assert(pg:query("BEGIN"))
-        local ok, err = pcall(function()
-            assert(pg:query("UPDATE players SET score=$1 WHERE id=$2", score, player_id))
-            assert(pg:query("COMMIT"))
-        end)
-        if not ok then
-            pg:query("ROLLBACK") -- 网络已断开时也可能失败，不能覆盖原错误
-            return nil, err
-        end
-        return true
-    end)
+local ok, value, commit = db:transaction(function(tx)
+    local rows, err = tx:query(
+        "UPDATE players SET score=score+$1 WHERE id=$2 RETURNING score", 10, 42)
+    if not rows then error(err) end
+    if #rows == 0 then tx:abort("player not found") end
+    return rows[1].score
+end, {
+    timeout = 5000,
+    statement_timeout = 3000,
+    idle_timeout = 3000,
+    cleanup_timeout = 1000,
+})
+if ok then
+    print("已提交，分数:", value)
+    -- commit.connection_usable=false 时，提交仍已确认，但连接已丢弃。
+else
+    local err = value
+    print(err.kind, err.phase, err.outcome, err.message, err.sqlstate)
+    if err.cleanup_error then print("清理失败:", err.cleanup_error.message) end
+    -- outcome=unknown 时需要业务查证；不要重放事务。
 end
+assert(db:disconnect())
 ```
 
-这里的超时按每次 `query` 计算，不是整个事务的总预算。数据库还可配置
-`statement_timeout`、`idle_in_transaction_session_timeout` 等服务端约束。
+接口约定：
 
-连接的 `connection is busy` 保护只覆盖一次操作，不会将 BEGIN 后的连接绑定到某个
-协程。两个查询之间，其他协程仍可在同一连接上执行 SQL，写入会加入尚未结束的事务，
-并随它一起提交或回滚。因此，使用该连接的**所有调用**都必须通过同一个队列，
-不能只给事务入口加锁。集成测试同时验证这种未保护的交错行为，以及共用队列后
-第二个协程等待事务结束、独立写入不受前一事务回滚影响的行为。
+- `database.new(config)` 复制配置并创建未连接的封装；配置约束沿用 pgmoon。
+- `db:connect()` / `db:disconnect()`：成功 `true`，失败 `nil, error_table`。
+  丢弃连接后可显式重新 `connect()`；这不意味着前一次写入没执行。
+- `db:query(sql, ...)` / `tx:query(sql, ...)`：成功 `rows, nil, metadata`，
+  失败 `nil, error_table`。无行命令也可能按原驱动返回 `true`。
+- `db:transaction(callback, options)`：成功 `true, callback_value, metadata`，
+  失败 `false, error_table`。只取回调的**第一个**返回值；`nil` 或 `false` 都是合法的
+  成功值，不表示回滚。需要取消时用 `tx:abort(reason)`，不是 `return false`。
+- `tx:abort(reason)` 记录取消并抛出内部信号；即使回调捕获它，事务也必须回滚。
+  回调异常保存在 `error.cause`；失败后仍保留首个主要错误和独立 `cleanup_error`。
+- 任意 `tx:query` 失败都会将事务标记为只能回滚，后续查询直接拒绝；忽略返回值、
+  `pcall` 捕获、甚至回调正常返回，都不能清除该状态。
+- 不支持嵌套事务/savepoint。回调所属协程不能绕过 `tx` 调用 `db` 方法。
+  `tx` 不能交给另一协程，回调结束后立即失效；误用会返回 context 错误。
+  其他协程调用普通 `db` 方法会排队。回调不要等待另一协程/RPC 对同一 `db` 的操作，
+  否则会形成应用层死锁；外部等待不受数据库查询定时器中断。
 
-本组件是连接驱动，不提供旧 PoC 的 pool/worker RPC 或 `transaction(statements)`
-接口。`pgmoon.Postgres.NULL` 是本 Lua 状态内的表身份，复制或通过 RPC 序列化后的
-普通表不是同一个值，会被拒绝为不支持的参数类型。跨服务封装应在接收端恢复 NULL，
-或传递 nil 并显式保存参数数量；展开参数表时使用 `table.unpack(params, 1, params.n)`，
-不能依赖 `#params` 保存尾部 nil。直接调用 `pg:query(sql, value, nil, nil)` 会保留
-这两个 NULL 参数。
+参数对象的 `pgmoon_serialize(value, context)` 仍受支持，但封装只传入含本地
+`NULL` 的值上下文，绝不把私有连接传给序列化器。内置数组（含嵌套序列化器）和
+pgvector 参数保持可用；依赖原始连接方法的自定义序列化器需要改为纯值编码。
+序列化期间也不能重入 `db` 方法。这里不防护同进程恶意 Lua 对 debug/模块全局的篡改。
+
+### 单语句与 SQL 安全边界
+
+封装始终调用扩展查询协议，**没有参数时也一样**。PostgreSQL 的 Parse 阶段拒绝
+多条语句，不能使用 `INSERT ...; COMMIT` 绕过封装；不是靠正则拆分分号。
+带引号/美元引用字符串中的分号、合法注释和单个末尾分号仍由 PostgreSQL 正确解析。
+
+本地扫描器只跳过开头的空白、行注释和嵌套块注释，再检查首关键字。允许：
+`SELECT INSERT UPDATE DELETE MERGE WITH VALUES TABLE CREATE ALTER DROP TRUNCATE
+COMMENT EXPLAIN ANALYZE REFRESH`。直接事务控制、`SET/RESET/DISCARD`、
+`PREPARE/EXECUTE`、`CALL/DO`、`COPY` 和其他入口拒绝；扩展协议暂不支持的命令不要
+为了绕过检查而拼接到后面。封装另检查 ReadyForQuery 是否符合预期事务状态。
+
+这是**可信应用 SQL 的生命周期约束，不是不可信 SQL 沙箱**。例如 SELECT 可以调用
+有副作用的函数或 `set_config`；允许的 DDL 也可能改变数据库对象。封装不审核函数体、
+触发器、扩展、数据库权限或外部副作用，更不保证它们全部可以回滚。不要接受用户直接
+提交的 SQL；业务值必须参数化，标识符使用允许列表。需要不受这些限制的管理 SQL、
+LISTEN/NOTIFY 或自定义驱动注册时，使用另一个显式管理的原始连接，不与此封装共用。
+
+### 结果分类与协议元数据
+
+原始 `pg:query` / `simple_query` / `extended_query` 保留既有第 1–6 返回值，追加固定
+第 **7** 返回值 `metadata`（成功和失败都有），不会以错误文本猜测网络故障：
+
+- `sqlstate`：服务器 ErrorResponse 的 SQLSTATE（如 `23503`、`57014`）。
+- `command_tags` / `command_tag`：全部/最后一个 CommandComplete 原始标签。
+- `ready_for_query`：已收到的 `I`（空闲）、`T`（事务内）、`E`（事务失败），未收到为 nil。
+- `failure_source`：`server/client/transport/timeout/protocol`；成功时为 nil。
+- `transport_failure_source`：服务器错误之后又丢失连接时保留后续故障来源。
+- `send_attempted`：是否尝试发送。true 不证明服务器收到或执行，也不能用于安全重试。
+- `connection_usable`：当前传输仍可使用。原始驱动处于 T/E 时仍可用但不代表可提交；
+  busy 拒绝时也可能为 true，但并不授予另一个调用者使用权。
+
+封装错误字段包含 `kind/message/phase/outcome/sqlstate/metadata`。提交时：
+
+- 收到 `CommandComplete COMMIT`：`true, value, metadata`，`outcome="committed"`。
+  即使之后丢失 ReadyForQuery，仍是已确认提交；只丢弃连接，并将 `connection_usable`
+  设为 false。不能把它误报成 unknown，不能重试。
+- 明确的服务器 COMMIT 错误（例如延迟外键约束）或 `CommandComplete ROLLBACK`：
+  `false, error`，`outcome="not_committed"`。
+- COMMIT 已尝试发送，但没有上述明确证据便断线/超时：`outcome="unknown"`，
+  丢弃连接且不重试。业务需凭幂等键、唯一流水号或独立查询查证。
+- COMMIT 前的事务失败：不会发送 COMMIT，尝试回滚，保留主要错误与清理失败。
+  普通 `db:query` 在发送后丢失结果也可能是 unknown，不意味着写入没有生效。
+
+### 超时与清理
+
+所有 options 都是 1–2147483647 的整数毫秒（上限避免 Skynet 定时器溢出）。`timeout` 默认取连接 timeout（未配置为 30000），
+从获取队列锁后、BEGIN 前开始计时，**不包含排队时间**。每次数据库操作取连接超时与
+事务剩余预算的较小值，回调返回/再次查询时检查总预算，超时后禁止 COMMIT。
+这不是可抢占的 Lua 执行期限：CPU 死循环、外部 RPC/任意 yield 不能被它强制结束。
+Skynet 约 10ms 精度也不构成硬实时保证。
+
+`statement_timeout`、`idle_timeout` 默认取事务 timeout，通过 `set_config(...,true)`
+仅在当前事务设置，分别限制数据库语句和空闲事务；不计队列等待，也不代替应用预算。
+异常/回滚后局部设置恢复。`cleanup_timeout` 默认 `min(连接 timeout, 5000)`，为回滚
+提供独立预算，以便主预算耗尽后仍能清理。无法确认空闲状态的连接会丢弃，之后的
+排队调用得到未连接错误，不会自动连上新连接继续一段旧事务。
+
+### 原始 pgmoon 与 RPC NULL
+
+直接 `require "pgmoon"` 仍允许 BEGIN/COMMIT 和无参数简单查询，原有用法兼容。
+原始连接的 busy 保护只覆盖单次操作；若业务自行管理原始事务，所有使用该连接的
+入口仍必须共用同一个队列，不能只锁事务入口。回归测试保留未保护的交错示例。
+
+本封装不是跨服务事务/RPC 接口，回调和 `tx` 只能在拥有该连接的 Skynet 服务内执行。
+`pgmoon.Postgres.NULL` 是本 Lua 状态内的表身份；复制或 RPC 序列化后的普通表不是
+同一个值，会被拒绝为不支持的参数。RPC 边界应由业务定义可校验的 NULL 标记，并在
+接收端还原成本地哨兵；不要把任意空表或 `{"NULL"}` 自动当作 NULL。
+也可传 nil 并显式保存参数个数，例如 `params.n=3`，使用
+`table.unpack(params, 1, params.n)`，不能依赖 `#params` 保留尾部 nil。
+直接 `db:query(sql, value, nil, nil)` 和 `tx:query` 都保留这两个 NULL 参数。
 
 ## pgvector
 
@@ -212,13 +312,18 @@ sh scripts/test-postgres.sh
 不映射数据库端口，不连接现有业务数据库；退出后删除测试容器、网络和证书。
 需要 Docker、可用网络（首次拉取镜像）和足够的镜像构建空间。
 
-脚本还运行 `tests/protocol-regressions.lua` 中的 7 组协议回归。它使用实际驱动源码和
+脚本还运行 `tests/protocol-regressions.lua` 中的协议回归。它使用实际驱动源码和
 内存 socket，不依赖数据库、Skynet 进程或原生模块，可用 Lua 5.5 单独运行：
 
 ```sh
 LUA_PATH='components/skynet-postgres/lualib/?.lua;components/skynet-postgres/lualib/?/init.lua;;' \
   lua components/skynet-postgres/tests/protocol-regressions.lua
 ```
+
+`tests/transactions.lua` 另用可控连接故障验证事务状态机；共享队列的协程行为由真实
+Skynet 集成测试验证。只跑状态机时，Lua 路径还需要包含 Skynet 的 `lualib/?.lua`。
+提交应答后断线、明确拒绝后断线、未知提交及序列化器隔离也使用实际驱动的内存 wire
+测试覆盖；这些故障注入不声称等同于真实网络中的所有断线时序。
 
 真实数据库回归额外覆盖服务端错误包含 `read timeout` 时连接仍可复用、尾部 nil/NULL
 参数、复制 NULL 标记的明确拒绝、COMMIT 时延迟外键约束失败，以及上述跨协程事务边界。
@@ -251,3 +356,10 @@ PostgreSQL 16.11 + pgvector 0.8.1 上通过全部 38 组集成用例、7 组协�
 本次环境没有 autoconf，构建使用 `NOUSE_JEMALLOC`/系统 malloc；没有可查询的
 ca-certificates 包记录，因此仅关闭包版本检查，实际 CA 证书链的 12 条回归仍通过。
 本次没有重跑 Docker、Windows/Wine 或 Windows 实机验证。
+
+2026-11-05 方案 B 实现验证：在上述 Linux 原生运行时和独立 PostgreSQL 16.11 +
+pgvector 0.8.1 上通过 **52 组真实集成、27 组协议回归、19 组事务状态机**，以及原生
+加密/编解码单测。独立代码审查发现的序列化器连接泄露、错误对象格式化、晚超时连接
+退休和超大超时值均已补失败回归并修复。Lua 语法、shell 语法与 diff 检查通过。
+本环境没有 Docker，标准 `scripts/test-postgres.sh` 因 `docker: not found` 无法启动；
+未重跑 Docker、Windows/Wine 或 Windows 实机。无自动重试、PR、合并或部署。
